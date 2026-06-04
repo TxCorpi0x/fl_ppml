@@ -1,0 +1,7 @@
+# This directory holds prebuilt Concrete TFHE key bundles.
+#
+# The *.bin and *.zip files are excluded from source control because they
+# contain private key material (secret_keys.bin). See .gitignore.
+#
+# To regenerate bundles locally:
+#   conda run -n flEnv python -m fl.keys generate he_concrete_tfhe

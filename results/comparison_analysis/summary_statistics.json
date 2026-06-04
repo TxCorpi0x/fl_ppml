@@ -1,0 +1,50 @@
+{
+  "total_experiments": 50,
+  "datasets": {
+    "healthcare": {
+      "primary_metric": "AUC-PRC (%)",
+      "n_modes": 10,
+      "mean_accuracy": 83.40487180244659,
+      "std_accuracy": 2.2456138627481232,
+      "baseline_time_s": 6.711147308349609,
+      "best_mode": "ZKP-SAMPLED",
+      "fastest_privacy_mode": "DP"
+    },
+    "credit_card": {
+      "primary_metric": "AUC-PRC (%)",
+      "n_modes": 10,
+      "mean_accuracy": 75.98471327148533,
+      "std_accuracy": 4.806779613009874,
+      "baseline_time_s": 1364.2154610157013,
+      "best_mode": "HE-CONCRETE-TFHE-ZKP",
+      "fastest_privacy_mode": "HE-TENSEAL"
+    },
+    "stock": {
+      "primary_metric": "AUC-PRC (%)",
+      "n_modes": 10,
+      "mean_accuracy": 56.9288837501968,
+      "std_accuracy": 2.7668372101023198,
+      "baseline_time_s": 16.82436219851176,
+      "best_mode": "ZKP-SAMPLED",
+      "fastest_privacy_mode": "HE-TENSEAL"
+    },
+    "mnist": {
+      "primary_metric": "AUC-PRC (%)",
+      "n_modes": 10,
+      "mean_accuracy": 99.09783319879897,
+      "std_accuracy": 0.620997193040502,
+      "baseline_time_s": 908.1648524602255,
+      "best_mode": "BASELINE",
+      "fastest_privacy_mode": "HE-TENSEAL"
+    },
+    "cifar_10": {
+      "primary_metric": "AUC-PRC (%)",
+      "n_modes": 10,
+      "mean_accuracy": 45.69797678467449,
+      "std_accuracy": 6.997141403802885,
+      "baseline_time_s": 462.49085807800293,
+      "best_mode": "BASELINE",
+      "fastest_privacy_mode": "HE-TENSEAL"
+    }
+  }
+}

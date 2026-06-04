@@ -217,6 +217,11 @@ __marimo__/
 # Streamlit
 .streamlit/secrets.toml
 
+# Datasets
+dataset/
+
+# Keys
+keys/
 
 # ZKP
 gnark_service
@@ -226,3 +231,16 @@ gnark_service
 # The directory itself (fl/keys/prebuilt/) is tracked via .gitkeep.
 fl/keys/prebuilt/*.bin
 fl/keys/prebuilt/*.zip
+
+
+# CSV outputs
+*.csv
+results_*.csv
+
+# Keep selected runs by prefix (must come after broad result ignore patterns above)
+# Keep only selected runs by prefix.
+# `results/**` ignores parent dirs too, so unignore dirs first, then keep_* trees.
+!results/**/
+!results/**/keep_*/
+!results/**/comparison_report.json
+!results/**/keep_*/**/*.json

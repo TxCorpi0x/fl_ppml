@@ -18,14 +18,14 @@ set -e
 PREREQ_FAIL=0
 
 # 1. TenSEAL keys  (he_tenseal, he_tenseal_zkp, triple modes)
-if [[ ! -f tenseal_context.bin && ! -f keys/tenseal_context.bin ]]; then
+if [[ ! -f keys/he_tenseal/secret_key.pkl ]]; then
     echo "[PREREQ] TenSEAL keys not found. Run: python -m fl.keys generate he_tenseal --overwrite"
     PREREQ_FAIL=1
 fi
 
 # 2. DP params  (dp, he_*_zkp_dp triple modes)
-if [[ ! -f dp_params.json && ! -f keys/dp_params.json ]]; then
-    echo "[PREREQ] DP params not found. Run: python -m fl.keys generate dp --overwrite"
+if [[ ! -f keys/dp/dp_params.pkl ]]; then
+    echo "[PREREQ] DP params not found. Run: python -m fl.keys generate dp --output keys/dp/dp_params.pkl --overwrite"
     PREREQ_FAIL=1
 fi
 

@@ -37,20 +37,28 @@ def _fmt_crypto(seconds: float) -> str:
     return f"{seconds:.3f}s"
 
 
-def _best_accuracy(model_quality: Dict) -> Optional[float]:
-    """Return the best AUPRC or accuracy metric (0-100 scale), or None."""
-    for key in ("test_auprc", "test_accuracy", "val_accuracy"):
-        v = model_quality.get(key)
-        if v is not None:
-            val = _mean(v) if isinstance(v, dict) else float(v)
-            if val > 0:
-                return val * 100 if val <= 1.0 else val
-    return None
+def _round_mean(model_quality: Dict, key: str) -> Optional[float]:
+    """Return the round-mean of one quality metric on a 0-100 scale, or None.
+
+    Each metric gets its own column: an earlier helper returned AUPRC when
+    present and printed it under an accuracy header.
+    """
+    v = model_quality.get(key)
+    if v is None:
+        return None
+    val = _mean(v) if isinstance(v, dict) else float(v)
+    if val <= 0:
+        return None
+    return val * 100 if val <= 1.0 else val
+
+
+def _fmt_pct(value: Optional[float]) -> str:
+    return f"{value:.1f}" if value is not None else "N/A"
 
 
 def print_summary(results: List[Dict[str, Any]]) -> None:
     """Print a tabular summary of all mode results to stdout."""
-    header = f"{'Mode':<20} {'Status':<10} {'Time(s)':>9} {'Fit/rnd(s)':>11} {'Crypto/rnd':>12} {'Upload':>11} {'Acc(%)':>8}"
+    header = f"{'Mode':<20} {'Status':<10} {'Time(s)':>9} {'Fit/rnd(s)':>11} {'Crypto/rnd':>12} {'Upload':>11} {'AUPRC(%)':>9} {'Acc(%)':>7}"
     sep = "-" * len(header)
 
     print("\n" + sep)
@@ -123,8 +131,8 @@ def print_summary(results: List[Dict[str, Any]]) -> None:
 
         crypto_str = _fmt_crypto(crypto)
 
-        acc = _best_accuracy(model_quality)
-        acc_str = f"{acc:.1f}" if acc is not None else "N/A"
+        auprc = _round_mean(model_quality, "test_auprc")
+        acc = _round_mean(model_quality, "test_accuracy")
 
         # diagnostics warnings
         diag_str = ""
@@ -137,7 +145,8 @@ def print_summary(results: List[Dict[str, Any]]) -> None:
         upload_str = _fmt_upload(upload_mb)
         print(
             f"{mode:<20} {status:<10} {total_time:>9.1f} {fit_mean:>11.1f}"
-            f" {crypto_str:>12} {upload_str:>11} {acc_str:>8}" + diag_str
+            f" {crypto_str:>12} {upload_str:>11} {_fmt_pct(auprc):>9} {_fmt_pct(acc):>7}"
+            + diag_str
         )
 
         rows.append(
@@ -146,6 +155,7 @@ def print_summary(results: List[Dict[str, Any]]) -> None:
                 "fit_mean": fit_mean,
                 "crypto": crypto,
                 "upload_mb": upload_mb,
+                "auprc": auprc,
                 "acc": acc,
             }
         )
@@ -157,15 +167,18 @@ def print_summary(results: List[Dict[str, Any]]) -> None:
         sum_fit = sum(row["fit_mean"] for row in rows)
         sum_crypto = sum(row["crypto"] for row in rows)
         sum_upload = sum(row["upload_mb"] for row in rows)
-        accs = [row["acc"] for row in rows if row["acc"] is not None]
-        avg_acc = sum(accs) / len(accs) if accs else None
+
+        def _avg(key: str) -> Optional[float]:
+            vals = [row[key] for row in rows if row[key] is not None]
+            return sum(vals) / len(vals) if vals else None
 
         crypto_tot_str = _fmt_crypto(sum_crypto)
-        acc_tot_str = f"{avg_acc:.1f}" if avg_acc is not None else "N/A"
         upload_tot_str = _fmt_upload(sum_upload)
         print(
             f"{'TOTAL/AVG':<20} {'':<10} {sum_time:>9.1f} {sum_fit:>11.1f}"
-            f" {crypto_tot_str:>12} {upload_tot_str:>11} {acc_tot_str:>8}"
+            f" {crypto_tot_str:>12} {upload_tot_str:>11}"
+            f" {_fmt_pct(_avg('auprc')):>9} {_fmt_pct(_avg('acc')):>7}"
         )
 
-    print(sep + "\n")
+    print(sep)
+    print("AUPRC(%) and Acc(%) are test-set means over all evaluated rounds, not final-round scores.\n")

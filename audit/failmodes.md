@@ -92,3 +92,65 @@ Not tested here: what Flower 1.8 does when a client's `fit` raises (reported as 
 **Scope question for approval (CLAUDE.md rule 5).** E-1–E-5 are fail-open paths outside the ZKP flow (TenSEAL and TFHE aggregation and decryption, DP parameters). The Step 4 prompt asks me to report the pattern wherever it appears, but fixing it is outside the named area. I recommend including E-1, E-2, E-3 and E-5 in Phase 2, because each one silently corrupts or skips a security guarantee inside a round. For E-4, missing DP params should raise unless `dp_epsilon` is passed explicitly.
 
 **Stopping here, as Step 4 Phase 1 requires.**
+
+---
+
+# Phase 2 — fail closed (implemented)
+
+Approved scope: the proposed plan plus E-1 through E-5.
+
+## Changes by error path
+
+| Row / ID | Before | Now | Location | Pinned by |
+|---|---|---|---|---|
+| 1 client proof failure | swallowed; upload without proofs | raises; no upload. An empty proof set also raises | `fl/privacy/zkp.py::_generate_proofs` | `test_client_proof_generation_failure_raises` |
+| 2, 3a service unreachable, 5xx, non-JSON | counted as client failure → fallback; non-JSON crashed | `GnarkServiceError` → **round aborts** (`infrastructure_abort`): no update, no commit, no anchor | `fl/core/zkp_gnark.py::_post_service`, both aggregation paths | `test_verification_service_outage_aborts_round`, `test_composite_service_outage_aborts_round` |
+| 3b, 3c malformed proof or chunk payload | `KeyError` / `ValueError` escaped the strategy | counted as failed verification → client rejected | `verify_gnark_proofs`, `verify_gnark_proofs_light` | `test_malformed_payload_counts_as_verification_failure`, `test_bad_uploads_are_rejected_without_raising[missing_scale]` |
+| 4a–d layer names, partial coverage, composite coverage | client-supplied names; `"[]"` verified nothing; partial chunks and partial layers admitted | server-owned schema from `bind_server_model`; exact proof coverage, per-proof shape, scale and bound checked against server policy (`check_proof_policy`); upload shapes must match; chunked layers must be fully covered | `zkp_gnark.check_proof_policy`, `expected_proof_layout`, `ZKPMode._check_client`, composite admission | `test_plaintext_zkp_rejects_update_with_empty_layer_names` (**xfail removed; now passes**), `test_bad_uploads_are_rejected_without_raising[drop_layer_proof, off_policy_bound, no_proofs, wrong_shape_upload]` |
+| 5 partial failure / quorum | no quorum; `failures` ignored | at least `min_fit_clients` admitted, otherwise `no_quorum`; Flower failures recorded per round | `admission_quorum`, `FedPrivate._record_round` | `test_quorum_below_min_fit_clients_leaves_model_unchanged`, `test_no_model_commit_or_anchor_for_a_round_without_update` |
+| 6 all excluded | full unverified set aggregated | **no fallback**: plaintext `zkp` FedAvgs only the admitted subset itself; composites pass only admitted clients to HE aggregation, including the simulation path | `ZKPMode.aggregate_fit_override`, `_HeZKPCompositeMode._aggregate` | `test_all_clients_rejected_leaves_model_unchanged`, `test_composite_never_aggregates_rejected_clients` |
+| 7, E-5 pedersen stub | admitted everyone; CLI default | refused unless `FL_ZKP_ALLOW_PEDERSEN_STUB=1`, then recorded as `unverified_stub`; `--zkp_backend` defaults to `gnark` in `main_server.py`, `main_client.py`, `simulation.py` and the registry check | `zkp.resolve_backend` | `test_pedersen_stub_is_refused_unless_explicitly_allowed` |
+| 8 anchor build error | printed, round continued | propagates out of the strategy (the run fails) | `zkp.anchor_data` | code |
+| 9 ledger save error | warning | raises | `FedPrivate._chain_commit` | `test_ledger_save_failure_raises` |
+| 10 gnark start failure | "continuing anyway" | ZKP mode not run; result marked failed | `experiment._ensure_gnark_service`, `run_experiment` | `test_zkp_mode_is_not_run_without_a_healthy_proof_service` |
+| F-1, E-7 ledger for non-updating rounds | ModelCommit (and ProofAnchor) written | nothing written without an aggregate; ModelCommit hashes only admitted clients; anchors contain only admitted proofs | `FedPrivate._chain_commit` | `test_no_model_commit_or_anchor_for_a_round_without_update`, `test_model_commit_hashes_only_admitted_clients` |
+| B-5 non-canonical hash | `hash + r` verified | hashes and bounds outside [0, r) rejected before the service reduces them | `verify_gnark_proofs_light`, `check_proof_policy` | `test_light_verification_rejects_non_canonical_hash` (**xfail removed; now passes**) |
+| E-1 TenSEAL without server context | FedAvg over ciphertext bytes | missing public key raises in real mode; aggregation without a context raises | `he_tenseal.py::setup_server_context`, `aggregate_fit_override` | `test_tenseal_server_without_public_key_refuses_real_mode`, `test_tenseal_aggregation_without_context_raises` |
+| E-2 TenSEAL decryption failure | stale local weights kept | raises | `he_tenseal.py::receive_parameters` | `test_tenseal_decryption_failure_raises` |
+| E-3 TFHE aggregation failure; undecodable uint8 | plaintext FedAvg fallback; bytes passed through | raises; `_decompress_cte2_results` refuses undecodable uint8 payloads | `he_concrete_tfhe.py`, `he_tenseal.py::_decompress_cte2_results` | `test_tfhe_aggregation_without_context_or_on_error_raises`, `test_undecodable_uint8_payload_is_never_averaged` |
+| E-4 DP without params | ε silently 10 | raises unless `dp_epsilon` is passed explicitly; then σ is computed from that ε | `fl/privacy/dp.py` | `test_dp_without_params_file_requires_explicit_epsilon`; `tests/test_fl_package.py::test_dp_context_without_params_file_requires_explicit_epsilon` (replaces a test that asserted the fail-open fallback) |
+| E-6 skipped modes | silently absent | recorded as failed results with the reason; the run raises; failed or skipped results never overwrite stored entries in the dataset-level report | `fl/compare/runner.py` | `test_skipped_modes_are_reported_and_fail_the_run`, `test_failed_results_never_replace_stored_dataset_entries` |
+| Visible outcomes | verification outcome not persisted | `benchmark.round_outcomes` per round (`round`, `outcome`, `admitted`, `rejected: {cid: reason}`, `flower_failures`), merged into `comparison_report.json`; `validate_run` fails ZKP runs with any non-aggregated round, rejection or Flower failure | `FedPrivate._record_round`, `BenchmarkMetrics.round_outcomes`, `fl/compare/validation.py::validate_run` | `tests/test_zkp_validation.py` (3 new tests) |
+
+`he_elgamal_zkp` gained the same quorum and `last_round_report`, so its rounds appear in `round_outcomes` too.
+
+## Evidence
+
+**Test suite (`flEnv`):** `84 passed, 1 xfailed, 1 failed`.
+- The xfail is the CKKS composite ciphertext-binding attack, still vulnerable by design (S1-01).
+- The failure is the pre-existing `test_zkp_sampled.py::test_pct_sampling_env` (H2, Step 5).
+- Two former strict xfails now pass and their markers are removed: the empty-layer-names attack (S1-04) and the non-canonical hash (B-5).
+
+**`PYTHONPATH=. python audit/evidence/failmodes_evidence.py` on current code:**
+
+```
+[a  ZKP client, service unreachable]            -> RAISED RuntimeError: gnark proof generation failed …
+[b  zkp server, all proofs fail]                -> override_return (None, {'round_outcome': 'infrastructure_abort'}), admitted [], anchor None
+[b2 zkp server, no client sent proofs]          -> (None, {'round_outcome': 'no_quorum', 'admitted': 0, 'rejected': 2}), anchor None
+[c  he_tenseal_zkp server, all proofs fail]     -> (None, {'round_outcome': 'infrastructure_abort'}), anchor None
+[d  zkp with pedersen backend]                  -> RAISED RuntimeError: ZKP backend 'pedersen' performs no verification …
+[e  he_tenseal server, no context, non-sim]     -> RAISED RuntimeError: no server context in non-simulation mode …
+[f  verify_gnark_proofs, missing fields]        -> (False, ['w', 'b'])
+[f2 verify_gnark_proofs, oversized chunk shape] -> (False, ['w__chunk_0', 'b'])
+[g  dp, params file missing]                    -> RAISED FileNotFoundError: DP params not found …
+[h  _chain_commit after a no-update round]      -> []
+```
+
+Every row that failed open in Phase 1 now either rejects, aborts with no ledger entry, or refuses to run.
+
+**End-to-end run A** (distributed, healthcare, 2 rounds, 2 clients, 1 epoch, output outside `results/`; `compare.py` exit 0). For all three modes, `zkp`, `he_tenseal_zkp` and `he_elgamal_zkp`:
+- `round_outcomes` records `aggregated` in both rounds, with both clients admitted, no rejections, and `flower_failures: 0`.
+- The ledger has exactly one ModelCommit and one ProofAnchor per round, and each ModelCommit counts the 2 admitted clients.
+- `zkp_validation.ok` is true with **no warnings**. The "verification outcomes are not persisted" caveat no longer applies to new runs.
+
+**End-to-end run B** (a `zkp` run with `FL_ZKP_MAX_NORM` far below any real update, so every client's proving fails) was still running when this section was written. Its result, including how Flower 1.8 reports a client whose `fit` raises, will be recorded separately.

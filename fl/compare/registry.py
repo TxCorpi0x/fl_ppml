@@ -128,7 +128,7 @@ class ModeConfig:
             return None
         # ZKP pedersen: skip check when gnark backend is active
         if self.internal_mode == "zkp":
-            zkp_backend = os.environ.get("FL_ZKP_BACKEND", "pedersen").lower()
+            zkp_backend = os.environ.get("FL_ZKP_BACKEND", "gnark").lower()
             if zkp_backend == "gnark":
                 return None  # gnark doesn't need a pre-generated params file
         if not os.path.exists(self.requires_key):

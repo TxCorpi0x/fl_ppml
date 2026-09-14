@@ -62,7 +62,7 @@ def _build_parser() -> argparse.ArgumentParser:
         "--path_public_key", type=str, default="keys/he_tenseal/public_key.pkl"
     )
     sim.add_argument("--zkp", action="store_true", default=False)
-    sim.add_argument("--zkp_backend", type=str, default="pedersen")
+    sim.add_argument("--zkp_backend", type=str, default="gnark")
     sim.add_argument("--zkp_params", type=str, default="keys/zkp/zkp_params.pkl")
     sim.add_argument("--dp", action="store_true", default=False)
     sim.add_argument("--dp_params", type=str, default="keys/dp/dp_params.pkl")

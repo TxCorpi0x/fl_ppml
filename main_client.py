@@ -55,7 +55,7 @@ def _build_parser() -> argparse.ArgumentParser:
         "--path_public_key", type=str, default="keys/he_tenseal/public_key.pkl"
     )
     cli.add_argument("--zkp", action="store_true", default=False)
-    cli.add_argument("--zkp_backend", type=str, default="pedersen")
+    cli.add_argument("--zkp_backend", type=str, default="gnark")
     cli.add_argument("--zkp_params", type=str, default="keys/zkp/zkp_params.pkl")
     cli.add_argument("--dp", action="store_true", default=False)
     cli.add_argument("--dp_params", type=str, default="keys/dp/dp_params.pkl")

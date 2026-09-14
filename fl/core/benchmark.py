@@ -52,10 +52,17 @@ class BenchmarkMetrics:
         default_factory=list
     )  # F1-optimal decision threshold
 
+    # Per-round outcome reports recorded by the server strategy
+    round_outcomes: List[Dict] = field(default_factory=list)
+
     # Metadata
     mode: str = "baseline"  # baseline, he, zkp
     num_clients: int = 0
     rounds: int = 0
+
+    def add_round_outcome(self, report: Dict):
+        """Record how a round ended (aggregated, rejected clients, aborted)."""
+        self.round_outcomes.append(dict(report))
 
     def add_client_get_params(self, duration: float):
         """Add client parameter retrieval time."""
@@ -203,6 +210,7 @@ class BenchmarkMetrics:
                 "test_auprc": stats(self.test_auprc),
                 "test_threshold": stats(self.test_threshold),
             },
+            "round_outcomes": list(self.round_outcomes),
         }
 
     def save(self, filepath: str):

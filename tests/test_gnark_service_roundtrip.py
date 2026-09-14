@@ -72,12 +72,8 @@ def test_light_verification_rejects_a_forged_hash(gnark_service_url, state_dict)
     assert sorted(failures) == ["b", "w"]
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="audit/binding.md B-5: /verify_light reduces hash_hex mod r, so a "
-    "non-canonical encoding of the same public input is accepted",
-)
 def test_light_verification_rejects_non_canonical_hash(gnark_service_url, state_dict):
+    """Fixed on the verifier side (audit/binding.md B-5): hashes ≥ r are rejected before the service reduces them."""
     proofs, _ = generate_gnark_proofs(state_dict, service_url=gnark_service_url)
     aliased = [dict(p, hash_hex=format(int(p["hash_hex"], 16) + BN254_R, "x")) for p in proofs]
 

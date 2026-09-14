@@ -171,10 +171,15 @@ class HeTensealMode(PrivacyMode):
 
         public_path = config.he_tenseal_public_path
         if not os.path.exists(public_path):
-            print(
-                "[HE-TenSEAL] No server public key found; running in simulation mode."
+            if config.sim_mode:
+                print("[HE-TenSEAL] No server public key found; simulation mode transports plaintext.")
+                return None
+            # Without a context the server would FedAvg raw ciphertext bytes
+            # (audit/failmodes.md E-1).
+            raise FileNotFoundError(
+                f"TenSEAL public key not found: {public_path}\n"
+                "Run: python -m fl.keys generate he_tenseal"
             )
-            return None
 
         _, raw_context = read_query(public_path)
         ctx = ts.context_from(raw_context)
@@ -253,18 +258,15 @@ class HeTensealMode(PrivacyMode):
                 net, [p.astype(np.float32, copy=False) for p in params], None, None
             )
         else:
-            # Reassemble any CCHK-chunked arrays before decryption
+            # Reassemble any CCHK-chunked arrays before decryption. A failure
+            # raises: training on stale local weights while reporting success
+            # would hide it (audit/failmodes.md E-2).
             params = _unpack_arrays(list(params))
-            try:
-                if benchmark:
-                    with BenchmarkTimer(benchmark, "decryption"):
-                        set_parameters(net, params, context, None, he_backend="tenseal")
-                else:
+            if benchmark:
+                with BenchmarkTimer(benchmark, "decryption"):
                     set_parameters(net, params, context, None, he_backend="tenseal")
-            except Exception as e:
-                print(
-                    f"[HE-TenSEAL] receive_parameters failed ({e}); keeping local model weights"
-                )
+            else:
+                set_parameters(net, params, context, None, he_backend="tenseal")
 
     def post_fit_metrics(self, context, benchmark=None) -> Dict:
         metrics = {}
@@ -293,8 +295,12 @@ class HeTensealMode(PrivacyMode):
 
         sim_mode = config.sim_mode
 
-        if sim_mode or server_context is None:
-            return None  # fall through to standard FedAvg
+        if sim_mode:
+            return None  # simulation transports plaintext; standard FedAvg
+        if server_context is None:
+            raise RuntimeError(
+                "[HE-TenSEAL] no server context in non-simulation mode; refusing to FedAvg ciphertext bytes"
+            )
 
         print(
             f"[HE-TenSEAL] Round {server_round}: aggregating encrypted parameters from {len(results)} clients…"
@@ -491,8 +497,12 @@ def _decompress_cte2_results(results):
                     arr = np.load(io.BytesIO(zlib.decompress(raw)), allow_pickle=False)
                     fixed.append(arr.astype(np.float32, copy=False))
                     continue
-                except Exception:
-                    pass
+                except Exception as exc:
+                    # FedAvg over raw bytes is never meaningful (audit/failmodes.md E-3).
+                    raise ValueError(
+                        f"client {getattr(client, 'cid', '?')}: uint8 parameter is not a decodable "
+                        "plaintext envelope; refusing to average ciphertext or corrupt bytes"
+                    ) from exc
             fixed.append(p)
         fit_res.parameters = ndarrays_to_parameters(fixed)
         decompressed.append((client, fit_res))

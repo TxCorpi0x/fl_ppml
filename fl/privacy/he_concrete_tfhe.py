@@ -215,8 +215,10 @@ class HeConcreteThfeMode(PrivacyMode):
 
         sim_mode = config.sim_mode
 
-        if sim_mode or server_context is None:
-            return None  # fall through to standard FedAvg
+        if sim_mode:
+            return None  # simulation transports plaintext; standard FedAvg
+        if server_context is None:
+            raise RuntimeError("[HE-TFHE] no server context in non-simulation mode; refusing to FedAvg ciphertexts")
 
         print(
             f"[HE-TFHE] Round {server_round}: aggregating ENCRYPTED parameters from {len(results)} clients…"
@@ -249,10 +251,9 @@ class HeConcreteThfeMode(PrivacyMode):
             return params_agg, {}
 
         except Exception as e:
-            print(
-                f"[HE-TFHE] Encrypted aggregation failed: {e}; falling back to plain FedAvg."
-            )
-            return None
+            # No plaintext fallback: FedAvg over ciphertext envelopes corrupts
+            # the model silently (audit/failmodes.md E-3).
+            raise RuntimeError(f"[HE-TFHE] Encrypted aggregation failed: {e}") from e
 
     def pre_aggregate(self, results, config):
         """Decompress CTE2 simulation envelopes if present."""

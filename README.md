@@ -451,7 +451,8 @@ All tuning is via environment variables — no code changes required. Variables 
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `FL_ZKP_BACKEND` | `gnark` | `gnark` = Groth16 zk-SNARK; `pedersen` = legacy commitment (no soundness) |
+| `FL_ZKP_BACKEND` | `gnark` | `gnark` = Groth16 zk-SNARK; `pedersen` = legacy commitment stub (no verification), refused unless `FL_ZKP_ALLOW_PEDERSEN_STUB=1` |
+| `FL_ZKP_ALLOW_PEDERSEN_STUB` | `0` | `1` = knowingly run the unverified pedersen stub; every round is recorded as `unverified_stub` |
 | `FL_ZKP_SELECT_BY` | `size` | `size` = largest layers; `random` = rotate across rounds |
 | `FL_ZKP_NUM_LAYERS` | `1` | Layers proven per client per round |
 | `FL_ZKP_SAMPLE_PCT` | — | Fraction of layers to prove (alternative to `FL_ZKP_NUM_LAYERS`) |
@@ -460,6 +461,15 @@ All tuning is via environment variables — no code changes required. Variables 
 | `FL_ZKP_SCALE` | `1000000` | Float→int64 scale for the proof circuit |
 | `FL_ZKP_MAX_NORM` | `100.0` | Max ℓ₂ gradient norm in circuit; match to DP clipping norm when combining |
 | `FL_ZKP_TIMEOUT` | `120` | Per-call timeout (seconds) for the gnark HTTP service |
+
+**Failure handling.** Security-relevant paths fail closed (`audit/failmodes.md`):
+
+- A client whose proof generation fails raises instead of uploading.
+- The server checks every upload against its own model schema and proof policy: full coverage, shapes, scale and bound. Clients that fail are rejected; the round aborts if the proof service is unreachable.
+- If fewer clients are admitted than `min_fit_clients`, the global model is unchanged and nothing is written to the ledger.
+- Every round's outcome (`aggregated`, `no_quorum`, `infrastructure_abort`), including rejected clients and reasons, is recorded under `round_outcomes` in `comparison_report.json`. ZKP runs with any non-aggregated round fail validation.
+- `zkp_sampled` uploads don't cover every layer, so they are rejected until sampling is redesigned.
+- DP without a params file refuses to run unless `--dp_epsilon` is passed explicitly.
 
 ### HE
 

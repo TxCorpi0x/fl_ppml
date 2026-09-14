@@ -19,7 +19,7 @@ from fl.compare.validation import (
     ZKP_INTERNAL_MODES,
     load_ledger_entries,
     sampled_coverage_warning,
-    validate_zkp_ledger,
+    validate_run,
 )
 
 
@@ -180,6 +180,7 @@ def run_comparison(
 
     # ── prerequisites check ───────────────────────────────────────────────
     runnable: List[str] = []
+    skipped: List[Dict] = []
     for mode_key in cfg.modes:
         mode_cfg = MODES[mode_key]
         err = mode_cfg.check_prerequisites()
@@ -187,6 +188,8 @@ def run_comparison(
             runnable.append(mode_key)
         else:
             print(f"[WARN]  Skipping '{mode_key}': {err}")
+            # Requested but not run: recorded as a failed result, not silently absent.
+            skipped.append({"mode": mode_key, "success": False, "skipped": err, "benchmark": None})
     if not runnable:
         raise RuntimeError("No modes can run (prerequisites missing for all).")
 
@@ -216,7 +219,7 @@ def run_comparison(
         os.makedirs(ledger_dir, exist_ok=True)
 
     # ── run each mode ─────────────────────────────────────────────────────
-    results: List[Dict] = []
+    results: List[Dict] = list(skipped)
     for mode_key in runnable:
         mode_cfg: ModeConfig = MODES[mode_key]
         # Build per-mode args so each mode gets its own ledger file.
@@ -235,9 +238,10 @@ def run_comparison(
         )
         if cfg.chain_backend != "none":
             result["chain_ledger_path"] = mode_base_args["chain_ledger_path"]
-        if validate_zkp and mode_cfg.internal_mode in ZKP_INTERNAL_MODES:
-            report = validate_zkp_ledger(
+        if validate_zkp and mode_cfg.internal_mode in ZKP_INTERNAL_MODES and result.get("benchmark"):
+            report = validate_run(
                 load_ledger_entries(result.get("chain_ledger_path")),
+                result["benchmark"].get("round_outcomes"),
                 expected_rounds=cfg.num_rounds,
             )
             result["zkp_validation"] = report
@@ -295,12 +299,19 @@ def run_comparison(
     if cfg.chain_backend != "none":
         _merge_chain_ledgers(results, ledger_dir, run_dir)
 
-    invalid = [
-        r["mode"] for r in results if not (r.get("zkp_validation") or {}).get("ok", True)
-    ]
-    if invalid:
+    failed = {}
+    for r in results:
+        if r.get("success"):
+            continue
+        if r.get("skipped"):
+            failed[r["mode"]] = "skipped: prerequisites missing"
+        elif not (r.get("zkp_validation") or {}).get("ok", True):
+            failed[r["mode"]] = "ZKP validation failed"
+        else:
+            failed[r["mode"]] = r.get("error") or "run failed"
+    if failed:
         raise RuntimeError(
-            f"ZKP validation failed for {invalid}; see 'zkp_validation' in {report_path}. "
+            f"{len(failed)} mode(s) did not produce valid results: {failed}; see {report_path}. "
             "These runs are not valid evidence."
         )
 
@@ -407,10 +418,11 @@ def _merge_into_dataset_report(
                 f"[WARN]  Could not read existing dataset report ({exc}); it will be overwritten."
             )
 
-    # Overlay new results
+    # Overlay new results. Failed or skipped modes never replace a stored
+    # entry: that would swap valid evidence for a failure record.
     for r in new_results:
         mode = r.get("mode")
-        if mode:
+        if mode and r.get("success"):
             existing[mode] = r
 
     merged = list(existing.values())

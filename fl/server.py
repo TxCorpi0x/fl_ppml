@@ -151,10 +151,10 @@ class FedPrivate(fl.server.strategy.Strategy):
         results: List[Tuple[ClientProxy, FitRes]],
         failures,
     ) -> Tuple[Optional[Parameters], Dict[str, Scalar]]:
-        if not results:
-            return None, {}
-
         bm = self.benchmark or get_benchmark()
+        if not results:
+            self._record_round(bm, server_round, [], failures, None)
+            return None, {}
 
         # Collect any per-client benchmark metrics reported in fit responses
         if bm is not None:
@@ -200,12 +200,16 @@ class FedPrivate(fl.server.strategy.Strategy):
                 # the public key and cannot decrypt, so skip _update_central.
                 if not self.config.is_he:
                     self._update_central(params_agg)
-            self._chain_commit(server_round, params_agg, results)
+                # Nothing is committed or anchored for a round that did not
+                # update the model (audit/failmodes.md F-1, E-7).
+                self._chain_commit(server_round, params_agg, results)
+            self._record_round(bm, server_round, results, failures, params_agg)
             return params_agg, metrics_agg
 
         # ── Standard FedAvg (after mode pre-processing) ───────────────────────
         results = self.mode.pre_aggregate(results, self.config)
         if not results:
+            self._record_round(bm, server_round, [], failures, None)
             return None, {}
 
         weights_results = [
@@ -222,6 +226,7 @@ class FedPrivate(fl.server.strategy.Strategy):
 
         self._update_central(params_agg)
         self._chain_commit(server_round, params_agg, results)
+        self._record_round(bm, server_round, results, failures, params_agg)
         return params_agg, {}
 
     def configure_evaluate(
@@ -337,6 +342,30 @@ class FedPrivate(fl.server.strategy.Strategy):
                 {"model_state_dict": self.central.state_dict()}, self.config.model_save
             )
 
+    def _record_round(self, bm, server_round: int, results, failures, params_agg) -> None:
+        """Record how the round ended so rejected or aborted rounds show up in the report.
+
+        Modes that decide admission set ``mode.last_round_report``; for other
+        modes every result that reached aggregation counts as admitted.
+        """
+        report = getattr(self.mode, "last_round_report", None)
+        self.mode.last_round_report = None
+        if not report or report.get("round") != server_round:
+            report = {
+                "round": server_round,
+                "outcome": "aggregated" if params_agg is not None else "no_results",
+                "admitted": [str(cp.cid) for cp, _ in results] if params_agg is not None else [],
+                "rejected": {},
+            }
+        report = {**report, "flower_failures": len(failures or [])}
+        if report["outcome"] != "aggregated" or report["rejected"] or report["flower_failures"]:
+            print(
+                f"[Round {server_round}] outcome={report['outcome']} admitted={len(report['admitted'])} "
+                f"rejected={len(report['rejected'])} flower_failures={report['flower_failures']}"
+            )
+        if bm is not None:
+            bm.add_round_outcome(report)
+
     def _chain_commit(
         self,
         server_round: int,
@@ -346,15 +375,22 @@ class FedPrivate(fl.server.strategy.Strategy):
         """
         Compute model and client-update hashes then write both chain events.
 
-        Called after every round regardless of privacy mode:
+        Called only for rounds that produced an aggregate:
           - ModelCommit  → SHA-256 of the aggregated model parameters +
-                           per-client update hashes.
+                           per-client update hashes of the admitted clients.
           - ProofAnchor  → SHA-256 of accepted gnark proof payloads
                            (only emitted when the ZKP mode populated
                            ``self.mode._last_anchor_data``).
+        A ledger that cannot be saved raises: an unsaved audit trail is not
+        silently tolerated.
         """
-        if self.chain is None:
+        if self.chain is None or params_agg is None:
             return
+
+        report = getattr(self.mode, "last_round_report", None)
+        if report and report.get("round") == server_round:
+            admitted = set(report.get("admitted", []))
+            results = [(cp, fr) for cp, fr in results if str(cp.cid) in admitted]
 
         import hashlib
 
@@ -408,7 +444,7 @@ class FedPrivate(fl.server.strategy.Strategy):
             try:
                 self.chain.save(self.config.chain_ledger_path)
             except Exception as e:
-                logger.warning("[Chain] Could not save ledger: %s", e)
+                raise RuntimeError(f"[Chain] could not save ledger to {self.config.chain_ledger_path}: {e}") from e
 
 
 # ─────────────────────────────────────────────────────────────────────────────

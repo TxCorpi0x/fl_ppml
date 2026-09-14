@@ -379,5 +379,5 @@ Verification medians: 4.6 ms per 128-chunk, 2.9 ms per 64-chunk.
 | Shared client decryption key | Same trust model as the TenSEAL composites: any key holder can decrypt any client's upload |
 | Per-chunk proportional bound | Stricter than the global bound; an honest update with concentrated energy can be rejected |
 | Round-1 download | Server's plaintext initial model (the server's own random initialization) |
-| ModelCommit on a no-update round | `FedPrivate._chain_commit` still writes a ModelCommit when the mode returns no aggregate; Step 4 |
-| S1-02/S1-04/B-3/B-4/B-5/B-6 in the old modes | Unchanged; Steps 4 and 8 |
+| ModelCommit on a no-update round | **Fixed in Step 4:** `_chain_commit` writes nothing without an aggregate, and hashes only admitted clients (audit/failmodes.md Phase 2) |
+| S1-02/S1-04/B-3/B-4/B-5/B-6 in the old modes | **Fixed in Step 4:** no fallback re-admission (S1-02); server-owned schema and exact proof coverage (S1-04, B-4, B-6); no TFHE plaintext fallback (B-3); hashes ≥ r rejected before light verification (B-5, verifier side). **Still open by design:** S1-01, the CKKS/TFHE composites' proofs are not bound to their ciphertexts |

@@ -59,13 +59,26 @@ class DifferentialPrivacyMode(PrivacyMode):
             print(f"     noise_multiplier={params.noise_multiplier:.4f}")
             return params
 
-        # Fall back to config-level params (no file required)
-        print("[DP] No params file found; using config values.")
+        # No params file: only an explicitly requested ε is acceptable. The
+        # default dp_epsilon=10.0 is the "load from file" sentinel, and using
+        # it silently weakened the privacy budget (audit/failmodes.md E-4).
+        if getattr(config, "dp_epsilon", 10.0) == 10.0:
+            raise FileNotFoundError(
+                f"DP params not found: {dp_path}\n"
+                "Run: python -m fl.keys generate dp, or pass an explicit --dp_epsilon."
+            )
+        import numpy as _np
+
+        noise_multiplier = _np.sqrt(2 * _np.log(1.25 / config.dp_delta)) / config.dp_epsilon
+        print(
+            f"[DP] No params file; using explicit ε={config.dp_epsilon} δ={config.dp_delta} "
+            f"σ={noise_multiplier:.4f}"
+        )
         return DifferentialPrivacyParams(
             epsilon=config.dp_epsilon,
             delta=config.dp_delta,
             max_grad_norm=config.dp_max_grad_norm,
-            noise_multiplier=config.dp_noise_multiplier,
+            noise_multiplier=float(noise_multiplier),
         )
 
     def setup_server_context(self, config) -> None:

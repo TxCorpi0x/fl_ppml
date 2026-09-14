@@ -1,11 +1,11 @@
 """Proof-to-update binding attacks (audit/binding.md).
 
-Each attack test asserts the SECURE outcome — the attacker is not aggregated —
-and is marked xfail(strict=True) while the defect exists. Strict xfail turns
-green-by-accident into a failure, so a fix must deliberately remove the marker.
-Run with ``--runxfail`` to see the attack succeed against current code.
+Each attack test asserts the SECURE outcome — the attacker is not aggregated.
+Tests for defects that still exist are marked xfail(strict=True), so a fix
+must deliberately remove the marker. Run with ``--runxfail`` to see an attack
+succeed against current code.
 
-The control tests pass today and pin down what currently does work.
+The control tests pin down what currently does work.
 """
 
 import json
@@ -49,6 +49,14 @@ class _Net:
         return self._sd
 
 
+class _ServerModel(torch.nn.Module):
+    """Server-side model whose schema matches LAYERS."""
+
+    def __init__(self):
+        super().__init__()
+        self.model = torch.nn.Sequential(torch.nn.Linear(2, 2))
+
+
 def _fit_res(params, proofs, layer_names):
     metrics = {"zkp_proofs_json": json.dumps(proofs)}
     if layer_names is not None:
@@ -68,6 +76,14 @@ def config():
     return SimpleNamespace(zkp_backend="gnark", sim_mode=False)
 
 
+def _plaintext_server():
+    from fl.privacy.zkp import ZKPMode
+
+    mode = ZKPMode()
+    mode.bind_server_model(None, _ServerModel())
+    return mode
+
+
 # ─── Controls ────────────────────────────────────────────────────────────────
 
 
@@ -78,39 +94,30 @@ def test_control_poisoned_vector_cannot_be_proved(gnark_service_url):
 
 
 def test_control_plaintext_zkp_rejects_mismatched_params_with_full_layer_names(config):
-    """With complete, honest layer names, plaintext zkp binds proofs to params."""
-    from fl.privacy.zkp import ZKPMode
-
+    """Plaintext zkp binds proofs to the parameters the server received."""
     proofs, _ = generate_gnark_proofs(_honest_weights())
     honest = (SimpleNamespace(cid="honest"), _fit_res(list(_honest_weights().values()), proofs, list(LAYERS)))
     attacker = (SimpleNamespace(cid="attacker"), _fit_res(list(_poisoned_weights().values()), proofs, list(LAYERS)))
 
-    mode = ZKPMode()
+    mode = _plaintext_server()
     mode.aggregate_fit_override(1, [honest, attacker], [], None, config)
-    admitted = [cp.cid for cp, _ in mode.pre_aggregate([honest, attacker], config)]
 
-    assert admitted == ["honest"]
+    assert mode.last_round_report["admitted"] == ["honest"]
 
 
 # ─── Attacks ─────────────────────────────────────────────────────────────────
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="audit/findings.md S1-04: client-supplied empty zkp_layer_names_json "
-    "makes verify_gnark_proofs check nothing",
-)
 def test_plaintext_zkp_rejects_update_with_empty_layer_names(config):
-    from fl.privacy.zkp import ZKPMode
-
+    """Fixed: the server verifies against its own schema, not client layer names (findings.md S1-04)."""
     proofs, _ = generate_gnark_proofs(_honest_weights())
     honest = (SimpleNamespace(cid="honest"), _fit_res(list(_honest_weights().values()), proofs, list(LAYERS)))
     attacker = (SimpleNamespace(cid="attacker"), _fit_res(list(_poisoned_weights().values()), proofs, []))
 
-    mode = ZKPMode()
+    mode = _plaintext_server()
     mode.aggregate_fit_override(1, [honest, attacker], [], None, config)
-    admitted = [cp.cid for cp, _ in mode.pre_aggregate([honest, attacker], config)]
 
+    admitted = mode.last_round_report["admitted"]
     assert "attacker" not in admitted, f"poisoned update admitted to FedAvg: {admitted}"
 
 
@@ -146,13 +153,12 @@ def test_he_tenseal_zkp_rejects_ciphertext_that_does_not_match_proof(config):
     secret_ctx = make_tenseal_context()
     server_ctx = ts.context_from(secret_ctx.serialize(save_secret_key=False))
     mode = HeTensealZKPMode()
+    mode.bind_server_model(None, _ServerModel())
     he = mode._he_mode
 
     honest_proofs, _ = generate_gnark_proofs(_honest_weights())
     attacker_proofs, _ = generate_gnark_proofs(_honest_weights())  # proves vector A
 
-    # Encrypt every layer, the strongest HE configuration (not the first-layer
-    # default, audit/binding.md B-1).
     honest_ct = he._encrypt_params(_Net(_honest_weights()), secret_ctx, encrypt_layers=list(LAYERS))
     attacker_ct = he._encrypt_params(_Net(_poisoned_weights()), secret_ctx, encrypt_layers=list(LAYERS))  # submits vector B
 
@@ -162,7 +168,7 @@ def test_he_tenseal_zkp_rejects_ciphertext_that_does_not_match_proof(config):
     ]
     aggregated, _ = mode.aggregate_fit_override(1, results, [], server_ctx, config)
 
-    admitted = mode._last_anchor_data["client_ids"]
+    admitted = mode.last_round_report["admitted"]
     decrypted = _decrypt_aggregate(aggregated, secret_ctx)
     assert "attacker" not in admitted, (
         f"attacker admitted {admitted}; decrypted aggregate model.0.weight = "

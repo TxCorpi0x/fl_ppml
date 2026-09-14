@@ -181,6 +181,8 @@ class HeElGamalZKPMode(PrivacyMode):
         total = sum(eg.numel(shape) for _, shape in schema)
         self._last_anchor_data = None
 
+        from fl.privacy.zkp import admission_quorum, anchor_data, round_report
+
         admitted, rejected = [], {}
         try:
             for client_proxy, fit_res in results:
@@ -195,9 +197,16 @@ class HeElGamalZKPMode(PrivacyMode):
                 else:
                     admitted.append((client_proxy, fit_res, arrays, proofs))
 
-            if not admitted:
-                print(f"[HE-ElGamal] Round {server_round}: no client passed verification — global model unchanged.")
-                return None, {"elgamal_admitted": 0, "elgamal_rejected": len(rejected)}
+            quorum = admission_quorum(config)
+            if len(admitted) < quorum:
+                print(
+                    f"[HE-ElGamal] Round {server_round}: {len(admitted)} verified client(s) < quorum {quorum} "
+                    "— global model unchanged."
+                )
+                self.last_round_report = round_report(
+                    server_round, "no_quorum", [cp.cid for cp, _, _, _ in admitted], rejected
+                )
+                return None, {"elgamal_admitted": len(admitted), "elgamal_rejected": len(rejected)}
 
             weights = [int(fit_res.num_examples) for _, fit_res, _, _ in admitted]
             with _timer(benchmark, "server_aggregate"):
@@ -207,15 +216,11 @@ class HeElGamalZKPMode(PrivacyMode):
                 ]
         except eg.ElGamalServiceError as exc:
             print(f"[HE-ElGamal] Round {server_round}: ABORTED — proof service failure, not a client fault: {exc}")
+            self.last_round_report = round_report(server_round, "infrastructure_abort", [], rejected, str(exc))
             return None, {"elgamal_round_aborted": 1}
 
-        from fl.chain import hash_proof_payload
-
-        self._last_anchor_data = {
-            "round": server_round,
-            "proof_hashes": [hash_proof_payload(p) for _, _, _, proofs in admitted for p in proofs],
-            "client_ids": [str(cp.cid) for cp, _, _, _ in admitted],
-        }
+        self._last_anchor_data = anchor_data(server_round, [(str(cp.cid), proofs) for cp, _, _, proofs in admitted])
+        self.last_round_report = round_report(server_round, "aggregated", [cp.cid for cp, _, _, _ in admitted], rejected)
         header = np.array([eg.HEADER_MAGIC, sum(weights), server_round], dtype=np.int64)
         print(f"[HE-ElGamal] Round {server_round}: aggregated {len(admitted)} verified client(s), rejected {len(rejected)}")
         return ndarrays_to_parameters([header] + layers), {

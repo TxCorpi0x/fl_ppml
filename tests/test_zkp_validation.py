@@ -83,3 +83,44 @@ def test_sampled_coverage_identical_to_full_is_flagged():
     assert "zkp_sampled_not_sampling" in sampled_coverage_warning(full, sampled)
     reduced = validate_zkp_ledger(_ledger(proofs_per_client=2))
     assert sampled_coverage_warning(full, reduced) is None
+
+
+# ─── validate_run: ledger + recorded round outcomes ─────────────────────────
+
+
+def _outcomes(rounds=3, **override):
+    out = [{"round": r, "outcome": "aggregated", "admitted": ["0", "1", "2"], "rejected": {}, "flower_failures": 0} for r in range(1, rounds + 1)]
+    for rnd, changes in override.items():
+        out[int(rnd.lstrip("r")) - 1].update(changes)
+    return out
+
+
+def test_run_with_recorded_outcomes_passes_without_verification_warning():
+    from fl.compare.validation import VERIFICATION_NOT_RECORDED, validate_run
+
+    report = validate_run(_ledger(), _outcomes(), expected_rounds=3)
+    assert report["ok"], report["errors"]
+    assert VERIFICATION_NOT_RECORDED not in report["warnings"]
+
+
+def test_run_without_recorded_outcomes_keeps_ledger_only_warning():
+    from fl.compare.validation import VERIFICATION_NOT_RECORDED, validate_run
+
+    report = validate_run(_ledger(), None, expected_rounds=3)
+    assert report["ok"] and VERIFICATION_NOT_RECORDED in report["warnings"]
+
+
+def test_aborted_rejected_or_failed_rounds_invalidate_the_run():
+    from fl.compare.validation import validate_run
+
+    cases = {
+        "no_quorum": _outcomes(r2={"outcome": "no_quorum"}),
+        "infrastructure_abort": _outcomes(r2={"outcome": "infrastructure_abort", "detail": "service down"}),
+        "rejected": _outcomes(r2={"rejected": {"2": "bad proof"}}),
+        "flower failures": _outcomes(r2={"flower_failures": 1}),
+        "missing round": _outcomes()[:2],
+    }
+    for label, outcomes in cases.items():
+        report = validate_run(_ledger(), outcomes, expected_rounds=3)
+        assert not report["ok"], label
+        assert any("round" in e for e in report["errors"]), label

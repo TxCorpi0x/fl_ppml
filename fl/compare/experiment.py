@@ -123,19 +123,21 @@ def _needs_gnark(mode_cfg: ModeConfig) -> bool:
     return os.environ.get("FL_ZKP_BACKEND", "gnark").lower() == "gnark"
 
 
-def _ensure_gnark_service(log_dir: str) -> None:
+def _ensure_gnark_service(log_dir: str) -> bool:
     """Start the gnark ZKP HTTP service if it is not already healthy.
 
     Build order:
       1. If a pre-built binary ``zkp_gnark_service/gnark_service`` exists, use it.
       2. Otherwise, run ``go build -o gnark_service .`` in that directory.
       3. Kill whatever stale process is on the gnark port first.
+
+    Returns True only if the service is healthy; ZKP modes must not run otherwise.
     """
     global _GNARK_PROC
 
     if _gnark_is_healthy():
         print("[gnark] Service already healthy — reusing running instance.")
-        return
+        return True
 
     port = _gnark_port()
     print(f"[gnark] Clearing port {port}...")
@@ -165,9 +167,9 @@ def _ensure_gnark_service(log_dir: str) -> None:
     if needs_build:
         if shutil.which("go") is None:
             print(
-                "[gnark] [WARN]  'go' not in PATH and no pre-built binary found — skipping gnark service start."
+                "[gnark] [ERROR] 'go' not in PATH and no pre-built binary found — cannot start gnark service."
             )
-            return
+            return False
         print(f"[gnark] Building gnark service binary...")
         result = subprocess.run(
             ["go", "build", "-o", "gnark_service", "."],
@@ -178,7 +180,7 @@ def _ensure_gnark_service(log_dir: str) -> None:
         )
         if result.returncode != 0:
             print(f"[gnark] [ERROR] Build failed:\n{result.stderr}")
-            return
+            return False
         print("[gnark] Build OK.")
 
     os.makedirs(log_dir, exist_ok=True)
@@ -204,17 +206,16 @@ def _ensure_gnark_service(log_dir: str) -> None:
         time.sleep(1)
         if _gnark_is_healthy():
             print(f"[gnark] [OK] Healthy after {i + 1}s")
-            return
+            return True
         if _GNARK_PROC.poll() is not None:
             print(
                 f"[gnark] [ERROR] Service exited early (rc={_GNARK_PROC.returncode})."
                 f" Check {gnark_log_path}"
             )
-            return
+            return False
 
-    print(
-        "[gnark] [WARN]  Timeout waiting for gnark service to become healthy — continuing anyway."
-    )
+    print("[gnark] [ERROR] Timeout waiting for gnark service to become healthy.")
+    return False
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -721,9 +722,16 @@ def run_experiment(
     result_dir = os.path.join(output_dir, display_mode)
     os.makedirs(result_dir, exist_ok=True)
 
-    # Start the gnark ZKP service if this mode needs it and it isn't healthy.
-    if _needs_gnark(mode_cfg):
-        _ensure_gnark_service(result_dir)
+    # Start the gnark ZKP service if this mode needs it; never run a ZKP mode without it.
+    if _needs_gnark(mode_cfg) and not _ensure_gnark_service(result_dir):
+        return {
+            "mode": display_mode,
+            "success": False,
+            "exit_code": None,
+            "result_dir": result_dir,
+            "benchmark": None,
+            "error": "gnark proof service unavailable; ZKP mode not run",
+        }
 
     if use_simulation:
         return run_simulation(mode_cfg, display_mode, base_args, result_dir)

@@ -141,6 +141,47 @@ def validate_zkp_ledger(
     }
 
 
+def validate_run(
+    entries: Optional[List[Dict[str, Any]]],
+    round_outcomes: Optional[List[Dict[str, Any]]],
+    expected_rounds: Optional[int] = None,
+) -> Dict[str, Any]:
+    """Ledger validation plus the server's recorded per-round outcomes.
+
+    When outcomes are recorded, every expected round must have exactly one,
+    and it must be ``aggregated`` with no rejected clients and no Flower
+    failures. A run with aborted or partially rejected rounds is not valid
+    benchmark evidence. Without recorded outcomes (runs from before they
+    existed), the ledger-only report and its warning are returned unchanged.
+    """
+    report = validate_zkp_ledger(entries, expected_rounds)
+    if round_outcomes is None:
+        return report
+
+    errors = list(report["errors"])
+    by_round: Dict[Any, List[Dict[str, Any]]] = defaultdict(list)
+    for outcome in round_outcomes:
+        by_round[outcome.get("round")].append(outcome)
+    for rnd in range(1, (expected_rounds or 0) + 1):
+        if rnd not in by_round:
+            errors.append(f"round {rnd}: no recorded outcome")
+    for rnd, outs in sorted(by_round.items(), key=lambda kv: str(kv[0])):
+        if len(outs) != 1:
+            errors.append(f"round {rnd}: {len(outs)} recorded outcomes")
+            continue
+        out = outs[0]
+        if out.get("outcome") != "aggregated":
+            detail = out.get("detail") or out.get("rejected") or ""
+            errors.append(f"round {rnd}: outcome {out.get('outcome')} {detail}".rstrip())
+        elif out.get("rejected"):
+            errors.append(f"round {rnd}: clients rejected {out['rejected']}")
+        if out.get("flower_failures"):
+            errors.append(f"round {rnd}: {out['flower_failures']} Flower client failure(s)")
+
+    warnings = [w for w in report["warnings"] if w != VERIFICATION_NOT_RECORDED]
+    return {**report, "ok": not errors, "errors": errors, "warnings": warnings}
+
+
 def sampled_coverage_warning(
     zkp_report: Optional[Dict[str, Any]], sampled_report: Optional[Dict[str, Any]]
 ) -> Optional[str]:

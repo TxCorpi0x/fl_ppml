@@ -36,6 +36,12 @@ class PrivacyMode(ABC):
                      crypto is measured but plain numpy is transported.
     """
 
+    # Set by aggregate_fit_override when the mode decides which clients are
+    # admitted: {"round", "outcome", "admitted": [cid], "rejected": {cid: reason}}.
+    # outcome is one of "aggregated", "no_quorum", "infrastructure_abort" or
+    # "unverified_stub". The strategy records it and clears it each round.
+    last_round_report: Optional[Dict] = None
+
     # ── Identification ───────────────────────────────────────────────────────
 
     @property

@@ -15,6 +15,12 @@ from fl.compare.experiment import run_experiment
 from fl.compare.plots import create_plots
 from fl.compare.registry import DATASETS, MODES, DatasetConfig, ModeConfig
 from fl.compare.report import print_summary
+from fl.compare.validation import (
+    ZKP_INTERNAL_MODES,
+    load_ledger_entries,
+    sampled_coverage_warning,
+    validate_zkp_ledger,
+)
 
 
 @dataclass
@@ -108,6 +114,7 @@ def run_comparison(
     chain_backend: str = "mock",
     chain_ledger_dir: Optional[str] = None,
     dirichlet_alpha: Optional[float] = None,
+    validate_zkp: bool = True,
     **extra_args,
 ) -> List[Dict]:
     """Run all requested privacy modes and return results.
@@ -130,6 +137,11 @@ def run_comparison(
         Root output directory; each mode creates a sub-directory here.
     use_simulation:
         ``False`` (default) → real gRPC server + clients; ``True`` → Flower simulation subprocess.
+    validate_zkp:
+        ``True`` (default) → every ZKP-family mode must show, in its chain
+        ledger, proofs from every aggregated client in every round; any
+        failure marks that result unsuccessful and raises after the report is
+        written. See fl/compare/validation.py for what is not checked.
     **extra_args:
         Forwarded verbatim to the experiment subprocess.
 
@@ -158,6 +170,12 @@ def run_comparison(
         )
     )
     _validate_modes(cfg.modes)
+    # main_server.py requires min_fit_clients=2 and min_avail_clients=2, which
+    # the harness does not forward; fewer clients would wait until timeout.
+    if cfg.num_clients < 2:
+        raise ValueError(f"num_clients must be at least 2, got {cfg.num_clients}")
+    if cfg.num_rounds < 1:
+        raise ValueError(f"num_rounds must be at least 1, got {cfg.num_rounds}")
     _warn_on_heavy_image_zkp(cfg.dataset, cfg.modes)
 
     # ── prerequisites check ───────────────────────────────────────────────
@@ -217,10 +235,30 @@ def run_comparison(
         )
         if cfg.chain_backend != "none":
             result["chain_ledger_path"] = mode_base_args["chain_ledger_path"]
+        if validate_zkp and mode_cfg.internal_mode in ZKP_INTERNAL_MODES:
+            report = validate_zkp_ledger(
+                load_ledger_entries(result.get("chain_ledger_path")),
+                expected_rounds=cfg.num_rounds,
+            )
+            result["zkp_validation"] = report
+            if not report["ok"]:
+                result["success"] = False
+                print(f"[ZKP-VALIDATION] [FAIL] {mode_key}:")
+                for err in report["errors"]:
+                    print(f"    {err}")
         results.append(result)
 
     # ── post-processing ───────────────────────────────────────────────────
     add_diagnostics(results)
+
+    by_mode = {r.get("mode"): r for r in results}
+    sampled_warning = sampled_coverage_warning(
+        (by_mode.get("zkp") or {}).get("zkp_validation"),
+        (by_mode.get("zkp_sampled") or {}).get("zkp_validation"),
+    )
+    if sampled_warning:
+        by_mode["zkp_sampled"]["diagnostics"].append(sampled_warning)
+        print(f"[ZKP-VALIDATION] [WARN] {sampled_warning}")
 
     # Promote upload_size_bytes to top-level for easy notebook access.
     for r in results:
@@ -256,6 +294,15 @@ def run_comparison(
     # ── blockchain ledger merge + summary ──────────────────────────────────
     if cfg.chain_backend != "none":
         _merge_chain_ledgers(results, ledger_dir, run_dir)
+
+    invalid = [
+        r["mode"] for r in results if not (r.get("zkp_validation") or {}).get("ok", True)
+    ]
+    if invalid:
+        raise RuntimeError(
+            f"ZKP validation failed for {invalid}; see 'zkp_validation' in {report_path}. "
+            "These runs are not valid evidence."
+        )
 
     return results
 

@@ -236,6 +236,8 @@ fl/keys/prebuilt/*.zip
 # CSV outputs
 *.csv
 results_*.csv
+# Publication tables regenerated from raw results are evidence; keep them.
+!audit/tables/*.csv
 
 # Keep selected runs by prefix (must come after broad result ignore patterns above)
 # Keep only selected runs by prefix.

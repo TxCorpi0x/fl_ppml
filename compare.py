@@ -76,10 +76,14 @@ def _build_parser() -> argparse.ArgumentParser:
         type=int,
         default=3,
         metavar="N",
-        help="Number of FL clients (default: 3)",
+        help="Number of FL clients, at least 2 (default: 3)",
     )
     p.add_argument(
-        "--rounds", type=int, default=20, help="Number of FL rounds (default: 20)"
+        "--rounds",
+        type=int,
+        default=20,
+        help="Number of FL rounds, at least 1 (default: 20). "
+        "Use 2+ to exercise decrypting an aggregate before the next proven upload.",
     )
     p.add_argument(
         "--max-epochs",
@@ -163,6 +167,13 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Random seed for reproducibility (default: 42). "
         "Change seed across runs to estimate variance.",
     )
+    p.add_argument(
+        "--no-validate-zkp",
+        dest="validate_zkp",
+        action="store_false",
+        help="Skip ledger-based validation that every client emitted proofs in "
+        "every round of ZKP-family modes. Unvalidated runs are not publication evidence.",
+    )
     return p
 
 
@@ -238,6 +249,7 @@ def main(argv=None) -> int:
                 chain_backend=args.chain_backend,
                 chain_ledger_dir=args.chain_ledger_dir,
                 dirichlet_alpha=args.dirichlet_alpha,
+                validate_zkp=args.validate_zkp,
                 seed=args.seed,
             )
     except KeyboardInterrupt:

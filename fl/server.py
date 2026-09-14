@@ -445,6 +445,7 @@ def make_strategy(
     sample_batch = next(iter(testloader))
     central = get_model_for_batch(sample_batch, config.num_classes).to(device)
     server_context = mode.setup_server_context(config)
+    mode.bind_server_model(server_context, central)
 
     return FedPrivate(
         config=config,

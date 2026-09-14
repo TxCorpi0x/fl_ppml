@@ -45,17 +45,20 @@ Each mode addresses a distinct threat in the federated learning pipeline.
 | 4 | ZKP Sampled | `zkp_sampled` | Groth16 zk-SNARK, sampled layers | Gradient integrity |
 | 5 | ZKP Full | `zkp` | Groth16 zk-SNARK, all layers | Gradient integrity — full coverage |
 | 6 | DP | `dp` | Gaussian DP-SGD (Opacus) | Membership inference |
-| 7 | HE TenSEAL + ZKP | `he_tenseal_zkp` | CKKS + Groth16 | Confidentiality + Integrity |
-| 8 | HE Concrete + ZKP | `he_concrete_tfhe_zkp` | TFHE + Groth16 | Confidentiality + Integrity (bandwidth-efficient) |
-| 9 | HE TenSEAL + ZKP + DP | `he_tenseal_zkp_dp` | CKKS + Groth16 + DP-SGD | **Full triad** |
-| 10 | HE Concrete + ZKP + DP | `he_concrete_tfhe_zkp_dp` | TFHE + Groth16 + DP-SGD | **Full triad** (bandwidth-efficient) |
+| 7 | HE TenSEAL + ZKP | `he_tenseal_zkp` | CKKS + Groth16 (unbound) | Confidentiality only — proof not bound to ciphertext |
+| 8 | HE Concrete + ZKP | `he_concrete_tfhe_zkp` | TFHE + Groth16 (unbound) | Confidentiality only — proof not bound to ciphertext |
+| 9 | HE TenSEAL + ZKP + DP | `he_tenseal_zkp_dp` | CKKS + Groth16 (unbound) + DP-SGD | Confidentiality + membership privacy; no integrity |
+| 10 | HE Concrete + ZKP + DP | `he_concrete_tfhe_zkp_dp` | TFHE + Groth16 (unbound) + DP-SGD | Confidentiality + membership privacy; no integrity |
+| 11 | HE ElGamal + ZKP | `he_elgamal_zkp` | Exponential ElGamal (BabyJubJub) + ciphertext-bound Groth16 | Confidentiality + Integrity (norm-bounded, range-checked upload) |
+
+> **Integrity in modes 7–10.** Their ZKP proof covers a client-chosen plaintext vector and is not bound to the ciphertext the server aggregates, so a client can prove an honest vector and upload a poisoned one (`tests/test_zkp_binding_attack.py`, `audit/binding.md`). Only mode 11 binds proofs to the aggregated ciphertexts. Its remaining limitations — a bound on weights rather than the update, an in-process trusted setup, a shared client key — are listed in `fl/privacy/he_elgamal_zkp.py`.
 
 ### Triple Modes (9 & 10)
 
 Modes 9 and 10 layer all three mechanisms at distinct pipeline stages:
 
 1. **DP-SGD** (client training) — injects calibrated Gaussian noise into gradients; provides formal ε-DP guarantee against membership inference on the published model
-2. **Groth16 ZKP** (pre-upload) — proves the noisy gradient's ℓ₂ norm is bounded; certifies client honesty to the server without revealing the gradient
+2. **Groth16 ZKP** (pre-upload) — proves a norm bound over a client-chosen plaintext vector; the proof is not bound to the uploaded ciphertext, so it certifies nothing about what is aggregated
 3. **CKKS / TFHE encryption** (upload) — encrypts the noisy, norm-bounded gradient in transit; protects against a curious aggregation server
 
 Each mechanism is independent; their composition is safe and additive in overhead.
@@ -462,7 +465,11 @@ All tuning is via environment variables — no code changes required. Variables 
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `FL_ENCRYPT_LAYERS` | `model.0.weight,model.0.bias` | Layers to encrypt. `ALL` = full gradient privacy |
+| `FL_ENCRYPT_LAYERS` | `ALL` | TenSEAL layers to encrypt; unlisted layers are sent in plaintext. Names not in the model are an error |
+| `FL_CONCRETE_TFHE_FORCE_REAL` | `0` | `1` = run real TFHE on image datasets (high RAM) |
+| `FL_CONCRETE_TFHE_ALLOW_SIMULATED` | `0` | `1` = knowingly send plaintext quantized weights on image datasets; otherwise TFHE on images refuses to run |
+| `FL_ELGAMAL_SCALE` | `1000` | `he_elgamal_zkp` quantization: q = round(w·scale), \|q\| < 2¹⁷ |
+| `FL_ELGAMAL_CHUNK` | `128` | `he_elgamal_zkp` coordinates per proof |
 | `FL_CONCRETE_TFHE_BIT_WIDTH` | `14` | TFHE quantization bit width (2–16). Lower = more accuracy loss |
 | `FL_CONCRETE_TFHE_ADAPTIVE_QUANT` | `0` | `1` = per-layer quantization scale fitting (~0.5–1% accuracy recovery) |
 

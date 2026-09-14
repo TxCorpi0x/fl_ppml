@@ -238,7 +238,17 @@ def generate_gnark_proofs(
             payload = _build_payload(weights, scale, bound_sq, name)
             data = post_json(f"{service_url}/prove", payload, _http_timeout(timeout))
             proof_b64 = data.get("proof_b64")
-            shape = data.get("shape")
+            hash_hex = data.get("hash_hex")
+            # The circuit size is fixed by the weights we sent, so the shape
+            # comes from our own request. The service does not echo it; if a
+            # service version does, it must agree.
+            shape = payload["shape"]
+            echoed_shape = data.get("shape")
+            if echoed_shape is not None and list(echoed_shape) != list(shape):
+                raise RuntimeError(
+                    f"gnark /prove returned shape {echoed_shape} for layer '{name}', "
+                    f"but {shape} was sent"
+                )
             # Validate required response fields
             if not proof_b64:
                 logger.error(
@@ -250,15 +260,12 @@ def generate_gnark_proofs(
                 raise RuntimeError(
                     f"Missing proof for layer '{name}': {server_err or data}"
                 )
-            if not shape:
-                logger.error(
-                    "gnark /prove returned missing/empty shape for layer %s: %s",
-                    name,
-                    data,
-                )
+            if not hash_hex:
                 raise RuntimeError(
-                    f"Missing 'shape' in proof response for layer '{name}': {data}"
+                    f"Missing 'hash_hex' in proof response for layer '{name}': {data}"
                 )
+            if not shape:
+                raise RuntimeError(f"Refusing to prove empty tensor for layer '{name}'")
 
             proof_payload = {
                 "layer": name,
@@ -266,7 +273,7 @@ def generate_gnark_proofs(
                 "scale": payload["scale"],
                 "bound_sq": payload["bound_sq"],
                 "proof_b64": proof_b64,
-                "hash_hex": data.get("hash_hex"),
+                "hash_hex": hash_hex,
             }
             return proof_payload, len(proof_b64)
         except RuntimeError:

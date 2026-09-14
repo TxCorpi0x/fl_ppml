@@ -1,0 +1,36 @@
+{
+  "ledger": [
+    {
+      "block": 1,
+      "timestamp": 1789406829.5309749,
+      "type": "ModelCommit",
+      "round": 1,
+      "model_hash": "0x06f4f6aba2bd555ddfa463e1ff1fc5986a4cad5dce83e0ccdfb648bca8c88a52",
+      "client_hashes": [
+        "0x9c17484161bf18eb27de0f6f351b1a7a6739656b37dd1552e99a0c411d766139",
+        "0x9bdcd83967ddeb0abc61cf7779a7b7c70dad7ab30d799897d65219a55f79596e"
+      ],
+      "num_clients": 2,
+      "metadata": {
+        "mode": "baseline"
+      },
+      "tx": "0x0000000000000000000000000000000000000000000000000000000000000001"
+    },
+    {
+      "block": 2,
+      "timestamp": 1789406829.563543,
+      "type": "ModelCommit",
+      "round": 2,
+      "model_hash": "0x5e0d516658fae9e5326b2213d99b488de773ae28a07cd4331c2a95ca023b60b2",
+      "client_hashes": [
+        "0xc1e717c04841a5b48374fdb88ee4e55784d60cd4838dee8bed4c12e7110a891d",
+        "0xa5e6b1eb627165185b48bd67fdc251dc76139056c271c134b58a2f9510552907"
+      ],
+      "num_clients": 2,
+      "metadata": {
+        "mode": "baseline"
+      },
+      "tx": "0x0000000000000000000000000000000000000000000000000000000000000002"
+    }
+  ]
+}

@@ -104,12 +104,16 @@ def _resolve_mode(args) -> str:
     if args.he and args.zkp and args.dp:
         # Triple combination: FHE + ZKP + DP
         backend = (args.he_backend or "tenseal").lower()
+        if backend == "elgamal":
+            raise ValueError("he_backend 'elgamal' does not support --dp")
         if backend in ("concrete_tfhe", "concrete"):
             return "he_concrete_tfhe_zkp_dp"
         return "he_tenseal_zkp_dp"
     if args.he and args.zkp:
         # Hybrid FHE + ZKP mode
         backend = (args.he_backend or "tenseal").lower()
+        if backend == "elgamal":
+            return "he_elgamal_zkp"
         if backend in ("concrete_tfhe", "concrete"):
             return "he_concrete_tfhe_zkp"
         return "he_tenseal_zkp"

@@ -152,6 +152,24 @@ class PrivacyMode(ABC):
         """
         return False
 
+    def bind_server_model(self, server_context: Any, model) -> None:
+        """
+        Give the server context the server's own global model.
+
+        Called once by make_strategy. Modes that must validate uploads against
+        a server-owned schema read it here instead of trusting client metadata.
+        Default: no-op.
+        """
+        return None
+
+    def on_fit_config(self, context: Any, fit_config: Dict) -> None:
+        """
+        Receive the server's fit config (including ``server_round``) at the
+        start of each client fit(), before any parameters are sent.
+        Default: no-op.
+        """
+        return None
+
     def aggregate_fit_override(
         self,
         server_round: int,

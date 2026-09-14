@@ -131,6 +131,7 @@ class FlowerClient(fl.client.NumPyClient):
         3. Return updated parameters (with encryption if needed) + metrics.
         """
         server_round = config["server_round"]
+        self.mode.on_fit_config(self.crypto_ctx, config)
         local_epochs = int(config["local_epochs"])
         lr = float(config["learning_rate"])
         print(

@@ -6,16 +6,25 @@ Registered modes
 he_tenseal_zkp       — TenSEAL CKKS encryption + gnark ZKP integrity proofs
 he_concrete_tfhe_zkp — Concrete TFHE encryption + gnark ZKP integrity proofs
 
+SECURITY STATUS — CONFIDENTIALITY ONLY, NO INTEGRITY
+----------------------------------------------------
+The ZKP proof in these modes is NOT bound to the ciphertext the server
+aggregates (audit/findings.md S1-01, audit/binding.md). A client can prove an
+honest vector and submit a ciphertext of a poisoned one; this is demonstrated
+by tests/test_zkp_binding_attack.py. The proofs measure prover cost only and
+provide no Byzantine-robustness. Use ``he_elgamal_zkp`` for ciphertext-bound
+proofs.
+
 Architecture
 ------------
-Both modes compose an HE backend (weight *confidentiality*) with ZKP proof
-generation (gradient *integrity*).  They address complementary security goals:
+Both modes compose an HE backend (weight confidentiality) with ZKP proof
+generation whose result is not tied to the uploaded ciphertext:
 
   ┌────────────┬──────────────────────────────────────────────┐
   │ Property   │ Mechanism                                    │
   ├────────────┼──────────────────────────────────────────────┤
   │ Privacy    │ FHE  — server never sees plaintext weights   │
-  │ Integrity  │ ZKP  — client proves ‖w‖² ≤ bound & hash    │
+  │ Integrity  │ none — proof is over a client-chosen vector  │
   └────────────┴──────────────────────────────────────────────┘
 
 Client-side flow (per round):

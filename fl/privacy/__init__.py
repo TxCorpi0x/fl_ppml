@@ -21,6 +21,7 @@ from fl.privacy import (
     dp,
     he_zkp,  # he_tenseal_zkp, he_concrete_tfhe_zkp
     he_zkp_dp,  # he_tenseal_zkp_dp, he_concrete_tfhe_zkp_dp
+    he_elgamal_zkp,  # he_elgamal_zkp (ciphertext-bound proofs)
 )  # noqa: F401
 
 __all__ = [

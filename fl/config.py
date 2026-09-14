@@ -59,6 +59,10 @@ class FLConfig:
     he_coeff_mod_bits: List[int] = field(default_factory=lambda: [60, 40, 40, 60])
     he_scale: int = 40  # global_scale = 2**he_scale
 
+    # ── Verifiable ElGamal HE params (he_elgamal_zkp) ─────────────────────────
+    he_elgamal_secret_path: str = "keys/he_elgamal/secret_key.json"
+    he_elgamal_public_path: str = "keys/he_elgamal/public_key.json"
+
     # ── Concrete TFHE params ──────────────────────────────────────────────────
     he_tfhe_bit_width: int = 14
     he_tfhe_adaptive_quant: bool = False

@@ -201,7 +201,7 @@ MODES: Dict[str, ModeConfig] = {
         color="#c0392b",
         timeout_s=7200,
         requires_key="keys/he_tenseal/secret_key.pkl",
-        display_name="HE-TenSEAL + ZKP",
+        display_name="HE-TenSEAL + ZKP (unbound)",
     ),
     "he_concrete_tfhe_zkp": ModeConfig(
         internal_mode="he_zkp",
@@ -209,7 +209,17 @@ MODES: Dict[str, ModeConfig] = {
         color="#6c3483",
         timeout_s=7200,
         requires_key=None,  # Concrete TFHE generates keys per-client at runtime
-        display_name="HE-TFHE + ZKP",
+        display_name="HE-TFHE + ZKP (unbound)",
+    ),
+    # Verifiable ElGamal: proofs are bound to the aggregated ciphertexts
+    # (audit/binding.md Design B + A).
+    "he_elgamal_zkp": ModeConfig(
+        internal_mode="he_zkp",
+        he_backend="elgamal",
+        color="#16a085",
+        timeout_s=14400,
+        requires_key="keys/he_elgamal/secret_key.json",
+        display_name="HE-ElGamal + ZKP (bound)",
     ),
     # ── Triple: HE + ZKP + DP  ─────────────────────────────────────────────
     # internal_mode="he_zkp_dp" → _build_mode_flags emits --he --zkp --dp.
@@ -220,7 +230,7 @@ MODES: Dict[str, ModeConfig] = {
         color="#922b21",
         timeout_s=7200,
         requires_key="keys/he_tenseal/secret_key.pkl",
-        display_name="HE-TenSEAL + ZKP + DP",
+        display_name="HE-TenSEAL + ZKP (unbound) + DP",
     ),
     "he_concrete_tfhe_zkp_dp": ModeConfig(
         internal_mode="he_zkp_dp",
@@ -228,6 +238,6 @@ MODES: Dict[str, ModeConfig] = {
         color="#4a235a",
         timeout_s=7200,
         requires_key=None,  # Concrete TFHE generates keys per-client at runtime
-        display_name="HE-TFHE + ZKP + DP",
+        display_name="HE-TFHE + ZKP (unbound) + DP",
     ),
 }

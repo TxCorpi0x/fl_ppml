@@ -1,0 +1,92 @@
+{
+  "ledger": [
+    {
+      "block": 1,
+      "timestamp": 1789407119.064387,
+      "type": "ModelCommit",
+      "round": 1,
+      "model_hash": "0xb57b91c79519b1049a4b5732d77c75185d95bd35fab4e593480d879a21741562",
+      "client_hashes": [
+        "0x70372e38ae468435b4ef1812bcd150ec13c01899467d284db5d4257c9ca40083",
+        "0xbc1609aa2434f9fa4438381bea4bfeb46b95f471cd8678c79e5794d35feda093"
+      ],
+      "num_clients": 2,
+      "metadata": {
+        "mode": "he_tenseal_zkp"
+      },
+      "tx": "0x0000000000000000000000000000000000000000000000000000000000000001"
+    },
+    {
+      "block": 2,
+      "timestamp": 1789407119.064395,
+      "type": "ProofAnchor",
+      "round": 1,
+      "proof_hashes": [
+        "0x8af5e9602549a3695e84fe0db1378bb640d0372705546fb07d519ef35ddc255e",
+        "0xe5b4f36c5f13fa9506532259cb59648eb2832879aa37d29b17c6e00c2df9fed1",
+        "0x94237f59a1fe8ed7cc2df8d5e35cce9fcbe12c12f381f16352dc1ac777c2462b",
+        "0x231c81696603afcfe384f10677a9cd226febd02b22876e593667c39acb576d3d",
+        "0x5f7d4f56bc7073ae911a169adc74ec96d9fe4ec468251e087001986d3563d13c",
+        "0x5b482c14cb9f1dc7a09cdaf6e4124cd1e62f70596dafc2da0395a4b49e3600e5",
+        "0xc34785dbee5c8c54b7124e5f8d7a59e585f0aab6be414d2a29481ec7aca31170",
+        "0x99109cbf4a35830fdbd748dc642ed20db1391a648d555eab12ca760da07120b8",
+        "0xd6fec1920748926b3733bf6063d7c0397cf905d54ea9aa9f2921793f62f7b871",
+        "0x3492cf281e96dc901c8ccddc120ba3e49951670445d6ce74069350966a6aecee",
+        "0x7f88234d9e6ca8f174c64bb47f8b8c951e693f645de6738e94d6757b1e73ec0e",
+        "0xa84a264a2c74e6db3f2fff0df4c4f3fc3caff2c262139371e4cc52979cb172a5",
+        "0x5b99f4da8fa6ec0daa50cffb2f3b61b17822d2ac6cc87e8679bbbd1e738e0d17",
+        "0x62ec239455ed6b99db33b0532ea1f5cb2d45a0083cdb5f19d09550ad42b0759e"
+      ],
+      "client_ids": [
+        "10000a23d97f4738963e4ab75cdfa510",
+        "866a8fd479d94da4a81b5c8ca6e6b3c6"
+      ],
+      "num_proofs": 14,
+      "tx": "0x0000000000000000000000000000000000000000000000000000000000000002"
+    },
+    {
+      "block": 3,
+      "timestamp": 1789407128.395647,
+      "type": "ModelCommit",
+      "round": 2,
+      "model_hash": "0x61d2801975b39d2655ac822872ea3c8d2223dd506fb8e7994e3bb39f7b82960d",
+      "client_hashes": [
+        "0xd2632434329de332228d8d6b6286b72ee311989028b8d3297bc717269bea35a0",
+        "0xaf2559d584a9a6d50a0a6333ce601df8915ec173b3cf2a1b3ae25f8ac676de64"
+      ],
+      "num_clients": 2,
+      "metadata": {
+        "mode": "he_tenseal_zkp"
+      },
+      "tx": "0x0000000000000000000000000000000000000000000000000000000000000003"
+    },
+    {
+      "block": 4,
+      "timestamp": 1789407128.3956559,
+      "type": "ProofAnchor",
+      "round": 2,
+      "proof_hashes": [
+        "0x9c3bf2e60e6798997afcc0f41fda7da2fb4da9f429e69d2fe868c8947a97ee48",
+        "0xfd34f352baae2a8684942af194fb3b9d9e85f69e503937bd8630749a146416b4",
+        "0xb6398e9b4ef6dd9063a571fc49db48bbf8778ad923b91f5f1457d9c9f5fd73f6",
+        "0x8885aecb0169667b72d95dc3ac2df15b8d04dd7dd25b1951e23409935a36f3ca",
+        "0xc061d990c240c7ad1c64cacb40f81da687cf470f6f02aaf9eb787139d7d53074",
+        "0x6474762281fafcbc543436a4f4e3bc68ab01aa928212684a8d1f344b884ecd2b",
+        "0xb4977392d5c9cece12d87a9b29400c0d6c03e749443b7dfdf62d9392f9e12c4f",
+        "0x34cfcf406fb6087664e6c22465e8462f9e1fd0f990f96eadd67a1cb8add57003",
+        "0x8f0ae55b85ea55f1326dfc66e01e482abb2f996dca1cbeb30fe92dbdc86dad0e",
+        "0x63d29c2e1535b5c212e6fbf1b5f95dbf32b84f14ed9f52c4a7b0a845835a9e3e",
+        "0x1d5c5685444545f832b59e5a885173ec2ae37b3505cd3371e2634ba12acff1d7",
+        "0xff130f7924c2318c6d11def9854842dc491267394e3d3a3fb9b1385c598d3d18",
+        "0x74fdf82a3c6704fed2490665a834d58dbea1de8dbec539d851a68693c7e13232",
+        "0xfd71930ed1cd3f698964e5c5a243c5799d628857818c572463b841ef60de23fe"
+      ],
+      "client_ids": [
+        "866a8fd479d94da4a81b5c8ca6e6b3c6",
+        "10000a23d97f4738963e4ab75cdfa510"
+      ],
+      "num_proofs": 14,
+      "tx": "0x0000000000000000000000000000000000000000000000000000000000000004"
+    }
+  ]
+}

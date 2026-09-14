@@ -426,6 +426,13 @@ func writeJSON(w http.ResponseWriter, status int, payload any) {
 }
 
 func main() {
+	if len(os.Args) > 1 && os.Args[1] == "elgamal-keygen" {
+		if err := runElgamalKeygen(os.Args[2:]); err != nil {
+			log.Fatal(err)
+		}
+		return
+	}
+
 	port := os.Getenv("ZKP_SERVICE_PORT")
 	if port == "" {
 		port = "9000"
@@ -437,6 +444,7 @@ func main() {
 	http.HandleFunc("/prove", proveHandler)
 	http.HandleFunc("/verify", verifyHandler)
 	http.HandleFunc("/verify_light", verifyLightHandler)
+	registerElgamalRoutes()
 
 	addr := ":" + port
 	log.Printf("gnark ZKP service listening on %s", addr)

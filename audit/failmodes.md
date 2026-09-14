@@ -153,4 +153,15 @@ Every row that failed open in Phase 1 now either rejects, aborts with no ledger 
 - The ledger has exactly one ModelCommit and one ProofAnchor per round, and each ModelCommit counts the 2 admitted clients.
 - `zkp_validation.ok` is true with **no warnings**. The "verification outcomes are not persisted" caveat no longer applies to new runs.
 
-**End-to-end run B** (a `zkp` run with `FL_ZKP_MAX_NORM` far below any real update, so every client's proving fails) was still running when this section was written. Its result, including how Flower 1.8 reports a client whose `fit` raises, will be recorded separately.
+**End-to-end run B** (a `zkp` run, 1 round, 2 clients, with `FL_ZKP_MAX_NORM=0.000001`, so every client's proving fails):
+- **The client fails closed:** both clients raised `gnark proof generation failed for layer 'model.0.weight' … 500 Server Error` (the unsatisfied statement) and exited. Neither uploaded an unproven update.
+- **Flower 1.8 reports a client whose `fit` raises as a failure:** the server logged `aggregate_fit: received 0 results and 2 failures`. No update was applied. This answers the open question from Phase 1.
+- **New finding F-2 (S2, availability and reporting): after every client fails, the server doesn't finish.**
+  - It stayed blocked in round-1 evaluation, waiting to sample clients that had exited, from 21:07 until the process was stopped by hand at 22:11. `fl.server.start_server` runs with `ServerConfig(num_rounds=…)` and no `round_timeout`.
+  - The harness waits for the server up to `server_timeout = client_timeout + 1800` (`fl/compare/experiment.py:562, 628-651`), which is **9,000 s with the default `FL_CLIENT_TIMEOUT=7200`**.
+  - Nothing is accepted wrongly, but the run is only marked failed about 2.5 hours after the round has already failed.
+  - **Proposed fix:**
+    - In the harness, once every client process has exited, give the server a short grace period (for example 60 s) and then terminate it and mark the mode failed.
+    - Pass a `round_timeout` to `ServerConfig` so a standalone server doesn't block forever.
+
+  **Not yet implemented; needs approval, since it's outside Step 5's scope.**

@@ -232,9 +232,9 @@ def _grpc_env(base: Dict[str, str]) -> Dict[str, str]:
     env["GRPC_ARG_KEEPALIVE_TIMEOUT_MS"] = "120000"
     env["GRPC_ARG_KEEPALIVE_PERMIT_WITHOUT_CALLS"] = "1"
     env["GRPC_ARG_HTTP2_MAX_PINGS_WITHOUT_DATA"] = "0"
-    env["FL_ENCRYPT_LAYERS"] = os.environ.get(
-        "FL_ENCRYPT_LAYERS", "model.0.weight,model.0.bias"
-    )
+    # FL_ENCRYPT_LAYERS is inherited from ``base`` only when the user sets it.
+    # Injecting a first-layer default here silently disabled full-model
+    # encryption in every harness run (audit/binding.md B-1).
     env["FL_CLIENT_TIMEOUT"] = os.environ.get("FL_CLIENT_TIMEOUT", "7200")
     return env
 

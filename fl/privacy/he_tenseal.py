@@ -404,19 +404,23 @@ class HeTensealMode(PrivacyMode):
         ``ts.CKKSTensor``; call its ``.serialize()`` to get raw bytes, then
         zlib-compress for transport.
 
-        Only layers listed in *encrypt_layers* (or ``FL_ENCRYPT_LAYERS`` env var)
-        are CKKS-encrypted; remaining layers are sent as plain float32 arrays.
-        Pass ``None`` / unset env var to encrypt everything.
+        Only layers listed in *encrypt_layers* (or an explicitly set
+        ``FL_ENCRYPT_LAYERS`` env var) are CKKS-encrypted; remaining layers are
+        sent as plain float32 arrays. With neither set, every layer is
+        encrypted (audit/binding.md B-1: the previous default silently
+        encrypted only ``model.0.*``, and nothing at all on CNNs).
         """
         from fl.core.security import crypte, _make_cvec
 
-        # Resolve which layers to encrypt (mirrors old behaviour driven by env var)
         if encrypt_layers is None:
-            env_val = os.environ.get(
-                "FL_ENCRYPT_LAYERS", "model.0.weight,model.0.bias"
-            ).strip()
+            env_val = os.environ.get("FL_ENCRYPT_LAYERS", "ALL").strip()
             if env_val and env_val.upper() != "ALL":
                 encrypt_layers = [s.strip() for s in env_val.split(",") if s.strip()]
+                missing = sorted(set(encrypt_layers) - set(net.state_dict()))
+                if missing:
+                    raise ValueError(
+                        f"FL_ENCRYPT_LAYERS names layers not in the model: {missing}"
+                    )
 
         layers = crypte(net.state_dict(), context, encrypt_layers)
         result = []

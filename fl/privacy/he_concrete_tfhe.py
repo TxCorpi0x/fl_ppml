@@ -28,19 +28,34 @@ from fl.privacy.he_tenseal import _decompress_cte2_results
 
 
 def _auto_disable_real_tfhe_for_images(config, requested_sim_mode: bool) -> bool:
-    """Return True when real TFHE should be auto-disabled to avoid OOM.
+    """Return True when simulated (unencrypted) TFHE was explicitly allowed.
 
-    By default, real Concrete TFHE on image datasets (MNIST/CIFAR) is too
-    memory-intensive for many machines and can trigger Linux OOM kills.
-    Set FL_CONCRETE_TFHE_FORCE_REAL=1 to bypass this safety policy.
+    Real Concrete TFHE on image datasets (MNIST/CIFAR) is too memory-intensive
+    for many machines. The simulated path sends quantized weights in plaintext,
+    so it is never selected silently (audit/binding.md B-2):
+
+    * FL_CONCRETE_TFHE_FORCE_REAL=1      → run real TFHE anyway
+    * FL_CONCRETE_TFHE_ALLOW_SIMULATED=1 → send plaintext, loudly labelled
+    * neither                            → refuse to run
     """
     if requested_sim_mode:
         return False
 
     dataset = str(getattr(config, "dataset", "")).lower()
     is_image_dataset = dataset in {"mnist", "cifar", "cifar10"}
-    force_real = os.environ.get("FL_CONCRETE_TFHE_FORCE_REAL", "0") == "1"
-    return is_image_dataset and not force_real
+    if not is_image_dataset or os.environ.get("FL_CONCRETE_TFHE_FORCE_REAL", "0") == "1":
+        return False
+    if os.environ.get("FL_CONCRETE_TFHE_ALLOW_SIMULATED", "0") == "1":
+        print(
+            "[HE-TFHE] [WARN] FL_CONCRETE_TFHE_ALLOW_SIMULATED=1: parameters for "
+            f"'{dataset}' are sent as PLAINTEXT quantized weights, not TFHE ciphertexts."
+        )
+        return True
+    raise RuntimeError(
+        f"Real TFHE on image dataset '{dataset}' is disabled by default to avoid OOM, "
+        "and the simulated path does not encrypt. Set FL_CONCRETE_TFHE_FORCE_REAL=1 to "
+        "run real TFHE, or FL_CONCRETE_TFHE_ALLOW_SIMULATED=1 to knowingly send plaintext."
+    )
 
 
 @register_mode("he_concrete_tfhe")

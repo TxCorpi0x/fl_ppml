@@ -865,12 +865,9 @@ python compare.py --dataset healthcare --chain-backend none
 ## Custom ledger directory
 python compare.py --dataset healthcare --chain-ledger-dir /tmp/my_ledgers
 
-## Simulation mode also supports chain flags
-python simulation.py simulation --rounds 3 --benchmark \
-  --chain_backend mock --chain_ledger_path /tmp/sim_ledger.json
-
-## Server subprocess (used internally by compare runner)
-python main_server.py --chain_backend mock --chain_ledger_path ./results/ledger.json
+## Single runs take the same options as run config keys
+python -m fl.launch --mode zkp --num-rounds 3 \
+  --chain-backend mock --chain-ledger-path /tmp/zkp_ledger.json
 ```
 
 ---

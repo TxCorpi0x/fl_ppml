@@ -1166,9 +1166,9 @@ CLIENT                          SERVER
   │  update model                 │
 ```
 
-#### 7.5 gRPC Integration
+#### 7.5 Transport
 
-TenSEAL ciphertexts are transmitted over Flower's gRPC channel as serialized bytes in the `fit` response metrics. The size for one ciphertext (N=8192, 4 primes, 13 values):
+TenSEAL ciphertexts are transmitted as serialized bytes (uint8 arrays) in the `ArrayRecord` of the ClientApp's train reply, which the SuperNode sends to the SuperLink over gRPC. The size for one ciphertext (N=8192, 4 primes, 13 values):
 
 ```
 size ≈ 2 × N × Σ(coeff_mod_bit_sizes) / 8

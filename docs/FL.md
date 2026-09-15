@@ -512,15 +512,15 @@ A single config object is instantiated at the entry point and passed to every co
 
 ### The Flower Integration
 
-Flower (flwr) is the federated learning framework underlying this project's network transport, client management, and round orchestration. Flower follows a gRPC-based client-server architecture:
+Flower (flwr 1.36) provides the network transport, node management and round orchestration. The project is a Flower App (declared in `pyproject.toml`) built on Flower's Message API:
 
-- The **server process** creates a `Strategy` (here, `FedPrivate`) and a `ClientManager`, opens a gRPC port, and waits for clients to connect.
-- Each **client process** creates a `NumPyClient` (here, `FlowerClient`), connects to the server over gRPC, and responds to `fit` and `evaluate` callbacks when notified that it has been selected for a round.
-- Flower handles all the networked parameter serialization (via `Parameters` protobuf messages), client selection (according to the strategy's `configure_fit` method), and round completion detection.
+- A **SuperLink** accepts SuperNode connections and runs the **ServerApp** (`fl.server:server_app`). The ServerApp builds an `FLConfig` from the run config and runs the `FedPrivate` strategy, which samples nodes, sends `train` and `evaluate` messages carrying an `ArrayRecord` (the model) and a `ConfigRecord`, and aggregates the replies.
+- Each **SuperNode** runs the **ClientApp** (`fl.client:client_app`) in a fresh process for every message. The ClientApp rebuilds a `FlowerClient` from the run config and its `partition-id`, trains or evaluates, and replies with an `ArrayRecord`, a `ConfigRecord` of metrics (including proof payloads) and a `MetricRecord`.
+- State a mode needs across rounds (the commit–challenge commitment) is kept in the node's `Context.state`, encoded as JSON, arrays and byte strings (`fl/records.py`); nothing is pickled.
 
-The separation of Flower's orchestration machinery from the application's privacy logic is clean: Flower knows nothing about HE, ZKP, or DP. It simply moves byte arrays between server and clients and invokes callbacks at the right times. All privacy-specific transformation of those byte arrays happens within `FlowerClient.fit` and `FedPrivate.aggregate_fit`, which call into the privacy plugin before and after Flower's internal serialization.
+Flower knows nothing about HE, ZKP, or DP. It moves arrays between the ServerApp and ClientApps; all privacy-specific transformation happens in `FlowerClient.fit` and `FedPrivate.aggregate_fit`, which call into the privacy plugin. The plugin sees each reply as a `(node, FitRes)` pair whose `node.cid` is the SuperNode id assigned by the SuperLink, not an identifier the client chooses.
 
-For in-process simulation (used for benchmarking without network overhead), Flower's `fl.simulation.start_simulation` function runs all clients in a single process using virtual clients dispatched via Ray or a simple thread pool, sharing memory rather than network transport. The framework's simulation mode (`simulation.py`) uses this path.
+`fl.launch` starts the SuperLink and SuperNodes locally and submits the run with `flwr run`. With `--simulation`, the SuperLink runs Flower's Simulation Runtime instead, dispatching ClientApps to Ray workers without SuperNode processes; in that mode HE plugins transport plaintext.
 
 ### The Ten Privacy Modes
 

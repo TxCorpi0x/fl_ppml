@@ -251,7 +251,7 @@ The combined ledger is saved to `results/<dataset>/<timestamp>/ledger_comparison
 
 **What the runner does:**
 1. Detects which modes need the gnark service; auto-starts it if not running
-2. Runs each mode as a subprocess with real gRPC transport (Flower)
+2. Runs each mode on a local Flower SuperLink with one SuperNode process per client (`fl.launch`)
 3. Collects `benchmark.json` from each mode
 4. Merges results into `results/<dataset>/<timestamp>/comparison_report.json`
 5. Merges per-mode chain ledger JSONs into `ledger_comparison.json`
@@ -303,18 +303,15 @@ docker compose --profile aggregate run --rm aggregate
 
 See [README.md](README.md) for full Docker instructions.
 
-#### 3. Simulation Mode (development/debug)
+#### 3. Single Runs (development/debug)
 
 ```bash
-## Quick local test (no gRPC overhead)
-python simulation.py simulation \
-  --rounds 2 --number_clients 2 \
-  --max_epochs 1 --benchmark
+## One mode on a local SuperLink and SuperNodes
+python -m fl.launch --mode baseline --num-clients 2 --num-rounds 2 --local-epochs 1
 
-## With specific privacy mode
-python simulation.py simulation --he --rounds 2 --benchmark
-python simulation.py simulation --zkp --zkp_backend gnark --benchmark
-python simulation.py simulation --dp --dp_params dp_params.json --benchmark
+## Flower Simulation Runtime (HE modes transport plaintext)
+python -m fl.launch --mode he_tenseal --simulation --num-rounds 2
+python -m fl.launch --mode dp --simulation --num-rounds 2
 ```
 
 ### Understanding Results
@@ -405,7 +402,7 @@ All tuning is done via environment variables — no code changes required. Varia
 
 | Variable | Default | Values | Effect on results |
 |----------|---------|--------|------------------|
-| `FL_ENCRYPT_LAYERS` | `model.0.weight,model.0.bias` | CSV layer names or `ALL` | Which layers to encrypt. `ALL` = full gradient privacy (maximum bandwidth); partial list = faster upload but plaintext leakage of remaining layers |
+| `FL_ENCRYPT_LAYERS` | `ALL` | CSV layer names or `ALL` | Which layers to encrypt. `ALL` = full gradient privacy (maximum bandwidth); partial list = faster upload but plaintext leakage of remaining layers |
 | `FL_CONCRETE_TFHE_BIT_WIDTH` | `14` | Integer 2–16 | TFHE quantization bit width. `8` ≈ 2–3% accuracy drop; `14` ≈ negligible loss; `16` ≈ lossless. Higher = larger ciphertexts and slower encryption |
 | `FL_CONCRETE_TFHE_ADAPTIVE_QUANT` | `0` | `0`, `1` | `1` enables per-layer quantization scale fitting; recovers ~0.5–1% accuracy on heterogeneous models at ~5–10% overhead |
 
@@ -413,8 +410,8 @@ All tuning is done via environment variables — no code changes required. Varia
 
 | Variable | Default | Values | Effect on results |
 |----------|---------|--------|------------------|
-| `FL_GRPC_MAX_MESSAGE_LENGTH` | `2147483647` | Bytes (integer) | Max gRPC payload size. Default (2 GiB) covers TenSEAL CKKS ciphertexts (~245 MB/round). Lower values cause `RESOURCE_EXHAUSTED` errors with HE modes |
-| `FL_CLIENT_TIMEOUT` | `7200` | Seconds | How long the server waits for all clients to complete per run. HE + ZKP modes can take 10+ minutes per round; set ≥ `num_rounds × max_round_time` |
+| `FL_CLIENT_TIMEOUT` | `7200` (6 h for HE/ZKP modes) | Seconds | Harness time budget per run, plus 30 min headroom. HE + ZKP modes can take 10+ minutes per round; set ≥ `num_rounds × max_round_time` |
+| `FL_CLIENT_WAIT_TIMEOUT` | `600` | Seconds | How long the ServerApp waits for enough SuperNodes before a round before it stops the run |
 | `FL_NUMBER_CLIENTS` | Set by `--num-clients` | Integer | Expected client count. Set automatically by the compare runner; override only in manual deployments |
 
 #### Quick Export Block
@@ -427,12 +424,11 @@ export FL_ZKP_PARALLELISM=4
 export FL_ZKP_BACKEND=gnark
 
 ## HE tuning
-export FL_ENCRYPT_LAYERS=model.0.weight,model.0.bias
+export FL_ENCRYPT_LAYERS=ALL
 export FL_CONCRETE_TFHE_BIT_WIDTH=14
 export FL_CONCRETE_TFHE_ADAPTIVE_QUANT=0
 
-## Transport
-export FL_GRPC_MAX_MESSAGE_LENGTH=2147483647
+## Timing
 export FL_CLIENT_TIMEOUT=7200
 
 ## Then simply:

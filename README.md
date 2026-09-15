@@ -1,7 +1,7 @@
 # Privacy-Preserving Federated Learning
 
-[![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
-[![Flower 1.8.0](https://img.shields.io/badge/flower-1.8.0-green.svg)](https://flower.ai)
+[![Python 3.12](https://img.shields.io/badge/python-3.12-blue.svg)](https://www.python.org/downloads/)
+[![Flower 1.36.0](https://img.shields.io/badge/flower-1.36.0-green.svg)](https://flower.ai)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 A benchmarking framework comparing **ten** privacy-preserving federated learning configurations across Homomorphic Encryption (HE), Zero-Knowledge Proofs (ZKP), Differential Privacy (DP), and their combinations — with blockchain audit ledger support, sweep experiments, and non-IID dataset partitioning.
@@ -92,7 +92,7 @@ Omitting `--dirichlet-alpha` uses stratified IID partitioning (default).
 ## Setup
 
 ```bash
-conda create -n flEnv python=3.10 -y
+conda create -n flEnv python=3.12 -y
 conda activate flEnv
 pip install -r requirements.txt
 ```
@@ -170,13 +170,17 @@ python compare.py --dataset mnist --dirichlet-alpha 0.1 --simulation
 python compare.py --dataset cifar --dirichlet-alpha 0.5 --simulation
 ```
 
-### Simulation mode (in-process, no gRPC — fast for development)
+### Single runs (`python -m fl.launch`)
+
+Runs use Flower 1.36 (Python 3.12). `fl.launch` starts a local SuperLink and one SuperNode per client, submits the Flower App declared in [pyproject.toml](pyproject.toml) with `flwr run`, waits for it and stops every process. The ServerApp is `fl.server:server_app`, the ClientApp `fl.client:client_app`; every run config key in `[tool.flwr.app.config]` is also a flag.
 
 ```bash
-python simulation.py simulation --rounds 2 --number_clients 2 --max_epochs 1 --benchmark
-python simulation.py simulation --he --rounds 2 --benchmark
-python simulation.py simulation --dp --dp_params dp_params.json --benchmark
+python -m fl.launch --mode baseline --dataset healthcare --data-path ./dataset/ --num-clients 3 --num-rounds 3
+python -m fl.launch --mode he_tenseal --data-path ./dataset/ --num-rounds 2 --results-dir results/he_single/
+python -m fl.launch --mode dp --simulation --data-path ./dataset/ --num-rounds 2
 ```
+
+`--simulation` uses Flower's Simulation Runtime instead of SuperNode processes; HE modes then transport plaintext and their results are marked `[SIM]`. Logs go to the results directory: `server.log` (SuperLink), `serverapp.log` (ServerApp), `client_<i>.log` (SuperNode and its ClientApp processes). ZKP modes need the proof service, which `compare.py` starts for you.
 
 ### Docker (original 4 modes)
 
@@ -382,7 +386,7 @@ results/
 ```
 fl_ppml/
 ├── compare.py                  ← main CLI: all 10 modes, sweeps, blockchain
-├── simulation.py               ← single-mode wrapper (legacy --he/--zkp/--dp flags)
+├── pyproject.toml              ← Flower App: ServerApp/ClientApp components and run config
 ├── (key generation moved)      ← use `python -m fl.keys generate ...` to create HE/DP/ZKP params
 ├── requirements.txt
 ├── scripts/
@@ -390,6 +394,9 @@ fl_ppml/
 │   ├── aggregate_statistics.py ← multi-run mean ± std across seeds
 │   └── run_repeated_experiments.sh ← loop: N runs per seed → aggregate
 ├── fl/                         ← core FL engine
+│   ├── launch.py               ← SuperLink/SuperNode launcher (python -m fl.launch)
+│   ├── server.py               ← ServerApp + FedPrivate strategy (Message API)
+│   ├── client.py               ← ClientApp + FlowerClient
 │   ├── runner.py               ← run_mode() entry point
 │   ├── chain.py                ← blockchain audit (mock / web3)
 │   ├── config.py               ← global configuration
@@ -425,7 +432,7 @@ This checkout includes the guides index at [docs/README.md](docs/README.md) plus
 |------|---------|
 | [docs/README.md](docs/README.md) | Guides index for FL, DP, FHE, ZKP, and blockchain topics |
 | [compare.py](compare.py) | Main comparison CLI for the 10 privacy modes |
-| [simulation.py](simulation.py) | Legacy simulation wrapper for single-mode runs |
+| [fl/launch.py](fl/launch.py) | Single runs on a local SuperLink and SuperNodes (`python -m fl.launch`) |
 | [fl/compare/registry.py](fl/compare/registry.py) | Dataset and mode registry, prerequisites, defaults |
 | [fl/keys/cli.py](fl/keys/cli.py) | Key / parameter generation CLI (`python -m fl.keys ...`) |
 | [scripts/aggregate_statistics.py](scripts/aggregate_statistics.py) | Mean ± std aggregation over repeated runs |
@@ -486,7 +493,7 @@ All tuning is via environment variables — no code changes required. Variables 
 | `FL_CONCRETE_TFHE_ALLOW_SIMULATED` | `0` | `1` = knowingly send plaintext quantized weights on image datasets; otherwise TFHE on images refuses to run |
 | `FL_ELGAMAL_SCALE` | `10000` | `he_elgamal_zkp` quantization: q = round(w·scale), \|q\| < 2¹⁷ (so \|w\| < 13.1). The proven bound is W²·⌈B·scale + √n/2⌉²; the √n/2 rounding slack is small only when B·scale ≫ √n, which is why the default rose from 1000 |
 | `FL_CLIENT_WAIT_TIMEOUT` | `600` | Seconds the server waits for `min_avail_clients` before a round; if they don't arrive it stops the run with an error instead of Flower's 24-hour wait |
-| `FL_SERVER_GRACE` | `600` | Harness: seconds a server may keep running after every client exited (60 s if any client failed) before it is terminated and the mode marked failed |
+| `FL_SERVER_GRACE` | `600` | Harness: seconds a run may stay active after every SuperNode exited before it is stopped and the mode marked failed |
 | `FL_ZKP_PROVER_URL` | `http://127.0.0.1:9000` | gnark prover role (clients) |
 | `FL_ZKP_VERIFIER_URL` | `http://127.0.0.1:9001` | gnark verifier role (server) |
 | `FL_ZKP_KEYS_DIR` | `zkp_gnark_service/keys` | Pinned manifest and verifying keys. The circuit sizes (norm chunk, ElGamal coordinates per proof) come from this manifest |
@@ -498,8 +505,8 @@ All tuning is via environment variables — no code changes required. Variables 
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `FL_GRPC_MAX_MESSAGE_LENGTH` | `2147483647` | Max gRPC payload (bytes). Default 2 GiB covers TenSEAL ciphertexts |
-| `FL_CLIENT_TIMEOUT` | `7200` | Server wait per run (seconds). HE+ZKP modes can take 10+ min/round |
+| `FL_CLIENT_TIMEOUT` | `7200` (6 h for HE/ZKP modes) | Harness: time budget per run in seconds, plus 30 min headroom; `FL_SERVER_TIMEOUT` sets the total directly |
+| `FL_CLIENT_WAIT_TIMEOUT` | `600` | ServerApp: seconds to wait for enough SuperNodes before a round, then stop the run |
 
 ---
 
@@ -518,14 +525,16 @@ All tuning is via environment variables — no code changes required. Variables 
 | DP accuracy unchanged during `--epsilon-sweep` | Sentinel `dp_epsilon=10.0` used | Pass `--dp-epsilon` or use `--epsilon-sweep` |
 | DP accuracy drops significantly | ε too small (strong noise) | Increase ε when generating DP params, e.g. `python -m fl.keys generate dp --epsilon 1.0` |
 | `FileNotFoundError: keys/he_tenseal/secret_context.bin` | HE keys not generated | `python -m fl.keys generate he_tenseal` |
+| TenSEAL `RuntimeError: incompatible version` | key files written by another TenSEAL version | `python -m fl.keys generate he_tenseal --overwrite` |
+| TFHE rounds end `no_results`, `ClientApp stopped responding`; client log shows an LLVM `Assertion failed` | `fl/keys/prebuilt/` bundles compiled by another Concrete version abort the ClientApp natively | move the bundles out of `fl/keys/prebuilt/`; fresh ones are generated on the next run |
 | `FileNotFoundError: keys/dp/dp_params.json` | DP params not generated | `python -m fl.keys generate dp --output keys/dp/dp_params.json` |
-| Port 8081–8084 busy | Docker port conflict | Change ports in `docker-compose.yml` |
+| `port 1909x is in use` from `fl.launch` | a SuperLink or SuperNode from an interrupted run is still running | stop it (`lsof -ti tcp:19093`), or wait for the other run to finish; runs use fixed ports |
 | Blockchain table shows all zeros | Stale ledger from pre-fix run | Re-run; parser unwraps `{"ledger": [...]}` format correctly |
 | `ledger_comparison.json` missing | `--chain-backend none` was set | Re-run without `--chain-backend none` |
 | `he_tenseal_zkp_dp` not found | Missing from mode list | Fixed: all 10 modes in `compare.py` default |
 | CIFAR `key not found` | Registry used `cifar10` only | Fixed: `@register_dataset("cifar")` alias added |
 | MNIST 0-byte file on parallel download | Race condition in parallel extract | Fixed via `fcntl.flock` exclusive lock |
-| Client 2 IndexError on startup | `--number_clients` missing from subprocess args | Fixed in `experiment.py` `common_args` |
+| `node partition … does not match num-clients` | SuperNode `--node-config` disagrees with the run's `num-clients` | start SuperNodes with `partition-id=<i> num-partitions=<num-clients>` |
 | CIFAR CNN input shape mismatch | `in_channels` hardcoded to 1 | Fixed: `Net` uses dynamic `in_channels` + computed `flat_dim` |
 
 ---

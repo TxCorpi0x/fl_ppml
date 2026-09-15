@@ -530,7 +530,7 @@ python compare.py --dataset creditcard --simulation --epsilon-sweep
 # On MNIST (image data, different noise sensitivity)
 python compare.py --dataset mnist --simulation --epsilon-sweep
 
-# Distributed (real gRPC, more realistic timing)
+# Distributed (SuperLink and SuperNode processes, realistic timing)
 python compare.py --dataset healthcare --rounds 10 --epsilon-sweep
 ```
 
@@ -839,57 +839,28 @@ This creates `dp_params.json` with your DP configuration.
 
 #### Step 2: Run DP Mode
 
-**Simulation Mode:**
+**Simulation Runtime:**
 ```bash
-python simulation.py simulation \
-    --dp \
-    --dp_params dp_params.json \
-    --benchmark \
-    --rounds 5 \
-    --number_clients 4 \
-    --max_epochs 1 \
-    --batch_size 32 \
-    --device cpu \
-    --save_results ./results/dp_test/ \
-    --model_save ./results/dp_test/model.pt
+python -m fl.launch --mode dp --simulation \
+    --dp-params-path dp_params.json \
+    --num-rounds 5 --num-clients 4 --local-epochs 1 --batch-size 32 \
+    --results-dir ./results/dp_test/
 ```
 
-**Federated Mode (Server):**
+**Federated (a local SuperLink and one SuperNode per client):**
 ```bash
-python main_server.py server \
-    --dp \
-    --rounds 5 \
-    --benchmark \
-    --model_save ./results/dp_server/model.pt
+python -m fl.launch --mode dp \
+    --dp-params-path dp_params.json \
+    --num-rounds 5 --num-clients 4 --local-epochs 1 \
+    --results-dir ./results/dp_federated/
 ```
 
-**Federated Mode (Clients):**
-```bash
-## Client 0
-python main_client.py client \
-    --dp \
-    --dp_params dp_params.json \
-    --id_client 0 \
-    --max_epochs 1 \
-    --save_results ./results/dp_client0/
-
-## Client 1
-python main_client.py client \
-    --dp \
-    --dp_params dp_params.json \
-    --id_client 1 \
-    --max_epochs 1 \
-    --save_results ./results/dp_client1/
-```
+For clients on other machines, start `flower-supernode` there with `--node-config "partition-id=<i> num-partitions=<n>"` and point it at the SuperLink's Fleet API.
 
 #### Step 3: Compare All Modes
 
 ```bash
-python compare_methods_simple.py \
-    --modes baseline,he,zkp,dp \
-    --rounds 2 \
-    --number_clients 2 \
-    --max_epochs 1
+python compare.py --dataset healthcare --modes baseline,he_tenseal,zkp,dp --rounds 2 --num-clients 2 --max-epochs 1
 ```
 
 ---
@@ -1114,7 +1085,7 @@ python -m fl.keys generate dp --output dp_params.json
 ### Next Steps
 
 1. ✅ Create DP parameters: `python -m fl.keys generate dp --output dp_params.json`
-2. ✅ Test DP mode: `python simulation.py simulation --dp --dp_params dp_params.json`
+2. ✅ Test DP mode: `python -m fl.launch --mode dp --simulation --dp-params-path dp_params.json`
 3. ✅ Compare all 10 modes: `python compare.py --dataset healthcare --modes all`
 4. 📊 Run epsilon sweep: `python compare.py --dataset healthcare --simulation --epsilon-sweep`
 5. 📊 Run alpha sweep: `python compare.py --dataset healthcare --simulation --alpha-sweep`

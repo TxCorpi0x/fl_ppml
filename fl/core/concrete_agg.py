@@ -114,7 +114,7 @@ try:
     from concrete import fhe
     from concrete.fhe import Configuration
     from concrete.fhe.compilation.value import Value
-    from concrete.compiler.evaluation_keys import EvaluationKeys
+    from concrete.fhe import EvaluationKeys
 
     CONCRETE_AVAILABLE = True
 except ImportError:

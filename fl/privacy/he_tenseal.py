@@ -30,8 +30,7 @@ from typing import Any, Dict, List, Optional, Tuple
 # gRPC on macOS truncates single recvmsg calls above ~256 MB.  Large CKKS
 # tensors are split into ≤ _CKKS_CHUNK_SIZE chunks, each prefixed with an
 # 8-byte CCHK header, and reassembled on the receiving side.
-# 48 MB is chosen conservatively: Flower's gRPC max_message_length defaults
-# to 536_870_912 (512 MB) but the OS recv buffer is typically ~256 MB on
+# 48 MB is chosen conservatively: the OS recv buffer is typically ~256 MB on
 # macOS, and creditcard CKKS layers can exceed 450 MB uncompressed.
 _CKKS_CHUNK_SIZE: int = 48 * 1024 * 1024  # 48 MB per chunk
 _CCHK_MAGIC: bytes = b"CCHK"  # 4-byte magic identifier

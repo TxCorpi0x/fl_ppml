@@ -74,6 +74,8 @@ For every ZKP mode the statement is about the update Δ = w_local − w_global, 
 
 The server chooses B and sends it to clients in the fit configuration (`zkp_max_update_norm`). A client that receives no bound refuses to prove.
 
+The CKKS/TFHE + DP composites (`he_tenseal_zkp_dp`, `he_concrete_tfhe_zkp_dp`) do not enforce the bound: their proofs are not bound to the aggregated ciphertext ([6.5](#65-cksstfhe-composites)), so a bound would add no integrity, and DP noise makes honest updates several times larger than the non-DP calibration, so every update would be clipped. They still prove the update with per-proof declared bounds, without a model-wide total and without clipping.
+
 ### 4.2 Choosing B
 
 ```
@@ -223,7 +225,7 @@ A coordinate that makes the bound impossible, or whose committed ciphertext diff
 
 `he_tenseal_zkp`, `he_concrete_tfhe_zkp` and their `_dp` variants run the `zkp` client over the plaintext update and then encrypt with CKKS or TFHE. The server cannot recompute the update from ciphertexts, so it uses **light verification**: it checks the proofs against the client-supplied hash (`/verify_light`) plus coverage and the total bound.
 
-Nothing ties that hash to the ciphertext the server aggregates. A client can prove an honest update and upload the encryption of a different one. These modes provide confidentiality only; their ZKP adds cost and no integrity.
+Nothing ties that hash to the ciphertext the server aggregates. A client can prove an honest update and upload the encryption of a different one. These modes provide confidentiality only; their ZKP adds cost and no integrity. The `_dp` variants do not enforce the update bound at all ([4.1](#41-what-is-bounded)).
 
 ### 6.6 Pedersen stub
 

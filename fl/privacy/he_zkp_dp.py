@@ -64,6 +64,9 @@ class _HeZKPDPCompositeMode(_HeZKPCompositeMode):
 
     def __init__(self):
         super().__init__()
+        # No update bound: these proofs aren't bound to the aggregated ciphertext,
+        # and DP noise makes honest updates far larger than a non-DP calibration.
+        self._zkp_mode = ZKPMode(enforce_update_bound=False)
         self._dp_mode = DifferentialPrivacyMode()
 
     @property

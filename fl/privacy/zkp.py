@@ -140,16 +140,17 @@ def clip_update_in_place(net, context: Dict) -> Tuple[Dict[str, np.ndarray], int
 
     global_arrays = context.get("global")
     bound = context.get("max_update_norm")
+    enforce = context.get("enforce_update_bound", True)
     if global_arrays is None:
         raise RuntimeError("[ZKP] no global model received; refusing to prove an update without its base")
-    if bound is None:
+    if bound is None and enforce:
         raise RuntimeError("[ZKP] server sent no update-norm bound")
     sd = net.state_dict()
     names = list(sd.keys())
     local = [t.detach().cpu().numpy() for t in sd.values()]
     shapes, sizes = [a.shape for a in local], [a.size for a in local]
     n = int(sum(sizes))
-    total = zkp_gnark.policy_bound_sq(bound, n)
+    total = zkp_gnark.policy_bound_sq(bound, n) if enforce else None
     n_proofs = len(zkp_gnark.expected_proof_layout([(k, s) for k, s in zip(names, shapes)]))
     g_q = np.concatenate([zkp_gnark.quantize(g).reshape(-1) for g in global_arrays])
 
@@ -158,7 +159,10 @@ def clip_update_in_place(net, context: Dict) -> Tuple[Dict[str, np.ndarray], int
 
     g_flat = np.concatenate([np.asarray(g, dtype=np.float64).reshape(-1) for g in global_arrays])
     l_flat = np.concatenate([a.astype(np.float64).reshape(-1) for a in local])
-    new_flat, norm, clipped = clip_update(g_flat, l_flat, bound, fits)
+    if enforce:
+        new_flat, norm, clipped = clip_update(g_flat, l_flat, bound, fits)
+    else:
+        new_flat, norm, clipped = l_flat, float(np.linalg.norm(l_flat - g_flat)), False
     context["update_norm"], context["update_clipped"] = norm, clipped
 
     import torch
@@ -211,8 +215,14 @@ class ZKPMode(PrivacyMode):
         print(f"[ZKP] Backend: pedersen stub (params from {path})")
         return {"backend": "pedersen", "context": read_zkp_params(path)}
 
+    def __init__(self, enforce_update_bound: bool = True):
+        # False only for compositions whose proofs aren't bound to what the server
+        # aggregates (the CKKS/TFHE + DP composites): there the bound adds no
+        # integrity, and clipping DP-noised updates would distort DP training.
+        self._enforce_update_bound = enforce_update_bound
+
     def setup_server_context(self, config) -> None:
-        if resolve_backend(config) == "gnark":
+        if resolve_backend(config) == "gnark" and self._enforce_update_bound:
             from fl.core.update_bound import max_update_norm
 
             self._max_update_norm = max_update_norm(config)
@@ -236,7 +246,8 @@ class ZKPMode(PrivacyMode):
         if isinstance(context, dict) and context.get("backend") == "gnark":
             from fl.core.update_bound import bound_from_fit_config
 
-            context["max_update_norm"] = bound_from_fit_config(fit_config)
+            context["max_update_norm"] = bound_from_fit_config(fit_config) if self._enforce_update_bound else None
+            context["enforce_update_bound"] = self._enforce_update_bound
 
     def get_parameters(self, net, context, *, sim_mode, benchmark=None) -> List[np.ndarray]:
         """Initial parameters carry no update, so no proof."""
@@ -350,6 +361,8 @@ class ZKPMode(PrivacyMode):
     def _total_bound_sq(self, schema, n: Optional[int] = None) -> int:
         from fl.core import zkp_gnark
 
+        if not self._enforce_update_bound:
+            return None
         bound = getattr(self, "_max_update_norm", None)
         if bound is None:
             raise RuntimeError("update-norm bound not set: setup_server_context must run first")

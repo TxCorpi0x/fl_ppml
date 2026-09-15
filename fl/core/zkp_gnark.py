@@ -474,13 +474,14 @@ def check_proof_policy(
     schema: List[Tuple[str, Tuple[int, ...]]],
     *,
     require_hash: bool,
-    total_bound_sq: int,
+    total_bound_sq: Optional[int],
     scale: Optional[float] = None,
 ) -> Optional[str]:
     """Return a rejection reason if a proof set doesn't match server policy, else None.
 
     Checks exact coverage of the server's model, per-proof shape, the scale,
-    that the declared per-proof bounds sum to at most ``total_bound_sq``, and
+    that the declared per-proof bounds sum to at most ``total_bound_sq`` (skipped
+    when it is None, for modes that don't enforce an update bound), and
     (for light verification) a canonical hash.
     """
     if not isinstance(proofs, list) or not proofs or not all(isinstance(p, dict) for p in proofs):
@@ -523,7 +524,7 @@ def check_proof_policy(
                 return f"proof '{name}' has a malformed hash"
             if not 0 <= h < BN254_R:
                 return f"proof '{name}' hash is not a canonical field element"
-    if declared > total_bound_sq:
+    if total_bound_sq is not None and declared > total_bound_sq:
         return f"declared update bounds sum to {declared}, above the server's bound {total_bound_sq}"
     return None
 

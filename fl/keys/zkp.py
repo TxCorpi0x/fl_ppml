@@ -2,14 +2,14 @@
 fl.keys.zkp — Zero-Knowledge Proof parameter generation and loading.
 
 Key material:
-    zkp_params.pkl  — Pedersen commitment group parameters (prime p, generator g/h)
+    zkp_params.json  — Pedersen commitment group parameters (prime p, generator g/h)
 
 Usage::
 
     from fl.keys.zkp import generate, load
 
-    generate(output="keys/zkp/zkp_params.pkl", bit_length=2048)
-    ctx = load("keys/zkp_params.pkl")
+    generate(output="keys/zkp/zkp_params.json", bit_length=2048)
+    ctx = load("keys/zkp/zkp_params.json")
 """
 
 from __future__ import annotations
@@ -21,7 +21,7 @@ import os
 
 
 def generate(
-    output: str = "keys/zkp/zkp_params.pkl",
+    output: str = "keys/zkp/zkp_params.json",
     bit_length: int = 2048,
     overwrite: bool = False,
 ) -> "ZKPContext":  # noqa: F821
@@ -29,7 +29,7 @@ def generate(
     Generate Pedersen commitment parameters and save to *output*.
 
     Args:
-        output:     Destination path for the .pkl file.
+        output:     Destination path for the JSON file.
         bit_length: Security parameter in bits (default 2048; use 4096 for
                     higher security at the cost of speed).
         overwrite:  Raise if file exists and this is False.
@@ -57,7 +57,7 @@ def generate(
     return ctx
 
 
-def load(path: str = "zkp_params.pkl") -> "ZKPContext":  # noqa: F821
+def load(path: str = "zkp_params.json") -> "ZKPContext":  # noqa: F821
     """Load and return a :class:`~fl.core.zkp.ZKPContext`."""
     from fl.core.zkp import read_zkp_params
 

@@ -8,9 +8,9 @@ Each sub-module owns one privacy mode's key lifecycle:
 Unified dispatcher::
 
     from fl.keys import generate, load
-    generate("he_tenseal", secret_path="keys/he_tenseal/secret_key.pkl", public_path="keys/he_tenseal/public_key.pkl")
-    generate("dp",  output="keys/dp/dp_params.pkl", epsilon=1.0)
-    generate("zkp", output="keys/zkp/zkp_params.pkl", bit_length=2048)
+    generate("he_tenseal", secret_path="keys/he_tenseal/secret_context.bin", public_path="keys/he_tenseal/public_context.bin")
+    generate("dp",  output="keys/dp/dp_params.json", epsilon=1.0)
+    generate("zkp", output="keys/zkp/zkp_params.json", bit_length=2048)
 
 Or from the command line::
 
@@ -48,8 +48,8 @@ def generate(mode: str, **kwargs: Any) -> Any:
     Example::
 
         from fl.keys import generate
-        generate("dp", output="dp_params.pkl", epsilon=1.0)
-        generate("he_tenseal", secret_path="keys/he_tenseal/secret_key.pkl", public_path="keys/he_tenseal/public_key.pkl")
+        generate("dp", output="dp_params.json", epsilon=1.0)
+        generate("he_tenseal", secret_path="keys/he_tenseal/secret_context.bin", public_path="keys/he_tenseal/public_context.bin")
     """
     if mode not in _GENERATORS:
         raise ValueError(f"Unknown mode '{mode}'. Available: {sorted(_GENERATORS)}")
@@ -69,8 +69,8 @@ def load(mode: str, **kwargs: Any) -> Any:
     Example::
 
         from fl.keys import load
-        ctx = load("he_tenseal", secret_path="keys/he_tenseal/secret_key.pkl")
-        dp  = load("dp",         path="keys/dp/dp_params.pkl")
+        ctx = load("he_tenseal", secret_path="keys/he_tenseal/secret_context.bin")
+        dp  = load("dp",         path="keys/dp/dp_params.json")
     """
     if mode not in _GENERATORS:
         raise ValueError(f"Unknown mode '{mode}'. Available: {sorted(_GENERATORS)}")

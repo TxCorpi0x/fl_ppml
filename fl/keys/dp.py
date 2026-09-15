@@ -2,14 +2,14 @@
 fl.keys.dp — Differential Privacy parameter generation and loading.
 
 Key material:
-    dp_params.pkl   — serialised DifferentialPrivacyParams
+    dp_params.json   — serialised DifferentialPrivacyParams
 
 Usage::
 
     from fl.keys.dp import generate, load
 
-    generate(output="keys/dp/dp_params.pkl", epsilon=1.0, delta=1e-5)
-    dp = load("keys/dp/dp_params.pkl")
+    generate(output="keys/dp/dp_params.json", epsilon=1.0, delta=1e-5)
+    dp = load("keys/dp/dp_params.json")
     print(dp.noise_multiplier)
 """
 
@@ -45,7 +45,7 @@ def _recommendation(epsilon: float) -> str:
 
 
 def generate(
-    output: str = "keys/dp/dp_params.pkl",
+    output: str = "keys/dp/dp_params.json",
     epsilon: float = 1.0,
     delta: float = 1e-5,
     max_grad_norm: float = 1.0,
@@ -57,7 +57,7 @@ def generate(
     Create and save Differential Privacy parameters.
 
     Args:
-        output:           Destination path for the .pkl file.
+        output:           Destination path for the JSON file.
         epsilon:          Privacy budget ε (smaller = more private, typical 0.1–10).
         delta:            Failure probability δ (typical 1e-5).
         max_grad_norm:    Gradient clipping bound C (typical 0.1–2.0).
@@ -100,7 +100,7 @@ def generate(
     return params
 
 
-def load(path: str = "dp_params.pkl") -> "DifferentialPrivacyParams":  # noqa: F821
+def load(path: str = "dp_params.json") -> "DifferentialPrivacyParams":  # noqa: F821
     """Load and return a :class:`~fl.core.security.DifferentialPrivacyParams`."""
     from fl.core.security import load_dp_params
 

@@ -32,7 +32,7 @@ binary cannot be built.
 
 import hashlib
 import secrets
-import pickle
+import json
 import os
 import time
 import logging
@@ -182,12 +182,12 @@ class ZKPContext:
         """
         context_dict = {
             "bit_length": self.bit_length,
-            "p": self.p,
-            "q": self.q,
-            "g": self.g,
-            "h": self.h,
+            "p": str(self.p),
+            "q": str(self.q),
+            "g": str(self.g),
+            "h": str(self.h),
         }
-        return pickle.dumps(context_dict)
+        return json.dumps(context_dict).encode("utf-8")
 
     @staticmethod
     def deserialize(data: bytes) -> "ZKPContext":
@@ -200,13 +200,13 @@ class ZKPContext:
         Returns:
             ZKPContext instance
         """
-        context_dict = pickle.loads(data)
+        context_dict = json.loads(data)
         ctx = ZKPContext.__new__(ZKPContext)
-        ctx.bit_length = context_dict["bit_length"]
-        ctx.p = context_dict["p"]
-        ctx.q = context_dict["q"]
-        ctx.g = context_dict["g"]
-        ctx.h = context_dict["h"]
+        ctx.bit_length = int(context_dict["bit_length"])
+        ctx.p = int(context_dict["p"])
+        ctx.q = int(context_dict["q"])
+        ctx.g = int(context_dict["g"])
+        ctx.h = int(context_dict["h"])
         return ctx
 
 
@@ -427,9 +427,8 @@ def write_zkp_params(file_path: str, context: ZKPContext, include_secret: bool =
         context: ZKP context to save
         include_secret: Whether to include secret parameters
     """
-    with open(file_path, "wb") as f:
-        data = {"context": context.serialize(include_secret=include_secret)}
-        pickle.dump(data, f)
+    with open(file_path, "w") as f:
+        json.dump({"context": json.loads(context.serialize(include_secret=include_secret))}, f, indent=2)
 
 
 def read_zkp_params(file_path: str) -> ZKPContext:
@@ -445,7 +444,12 @@ def read_zkp_params(file_path: str) -> ZKPContext:
     if not os.path.exists(file_path):
         raise FileNotFoundError(f"ZKP parameter file not found: {file_path}")
 
-    with open(file_path, "rb") as f:
-        data = pickle.load(f)
-
-    return ZKPContext.deserialize(data["context"])
+    try:
+        with open(file_path) as f:
+            data = json.load(f)
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise ValueError(
+            f"{file_path} is not a JSON ZKP parameter file (legacy pickle files are no longer loaded "
+            "because unpickling can execute code). Regenerate: python -m fl.keys generate zkp"
+        ) from exc
+    return ZKPContext.deserialize(json.dumps(data["context"]))

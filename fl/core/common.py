@@ -273,25 +273,25 @@ def parsing(description="PyTorch ImageNet Training"):
     parent_parser.add_argument(
         "--path_keys",
         type=str,
-        default="secret.pkl",
+        default="keys/he_tenseal/secret_context.bin",
         help="Path to get the combo private/public keys",
     )
     parent_parser.add_argument(
         "--path_public_key",
         type=str,
-        default="server_key.pkl",
+        default="keys/he_tenseal/public_context.bin",
         help="Path to get the the public key",
     )
     parent_parser.add_argument(
         "--path_crypted",
         type=str,
-        default="server.pkl",
+        default="server_weights.bin",
         help="Path to save the crypted (and not crypted) weights",
     )
     parent_parser.add_argument(
         "--zkp_params",
         type=str,
-        default="zkp_params.pkl",
+        default="keys/zkp/zkp_params.json",
         help="Path to get/save the ZKP parameters",
     )
     parent_parser.add_argument(
@@ -312,7 +312,7 @@ def parsing(description="PyTorch ImageNet Training"):
     parent_parser.add_argument(
         "--dp_params",
         type=str,
-        default="dp_params.pkl",
+        default="keys/dp/dp_params.json",
         help="Path to get/save the DP parameters",
     )
     parent_parser.add_argument(

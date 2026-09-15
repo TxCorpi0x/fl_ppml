@@ -7,6 +7,7 @@ Usage::
     python -m fl.keys generate dp         [--output OUTPUT] [--epsilon E] [--delta D] ...
     python -m fl.keys generate zkp        [--output OUTPUT] [--bit_length N] [--overwrite]
     python -m fl.keys generate he_concrete_tfhe [--bit_width N] [--num_clients N] ...
+    python -m fl.keys generate he_elgamal [--overwrite]
     python -m fl.keys list
     python -m fl.keys prebuilt            # list Concrete TFHE prebuilt bundles
 """
@@ -32,18 +33,20 @@ def _parser() -> argparse.ArgumentParser:
 
     # ── generate ──────────────────────────────────────────────────────────────
     gen = sub.add_parser("generate", help="Generate key material for a mode")
-    gen.add_argument("mode", choices=["he_tenseal", "dp", "zkp", "he_concrete_tfhe"])
+    gen.add_argument(
+        "mode", choices=["he_tenseal", "dp", "zkp", "he_concrete_tfhe", "he_elgamal"]
+    )
 
     # he_tenseal
     gen.add_argument(
         "--secret",
-        default="keys/he_tenseal/secret_key.pkl",
-        help="[he_tenseal] Client secret key path (default: keys/he_tenseal/secret_key.pkl)",
+        default="keys/he_tenseal/secret_context.bin",
+        help="[he_tenseal] Client secret key path (default: keys/he_tenseal/secret_context.bin)",
     )
     gen.add_argument(
         "--public",
-        default="keys/he_tenseal/public_key.pkl",
-        help="[he_tenseal] Server public key path (default: keys/he_tenseal/public_key.pkl)",
+        default="keys/he_tenseal/public_context.bin",
+        help="[he_tenseal] Server public key path (default: keys/he_tenseal/public_context.bin)",
     )
 
     # dp / zkp / concrete — shared output flag
@@ -161,7 +164,7 @@ def main(argv: list[str] | None = None) -> None:
             from fl.keys.dp import generate
 
             generate(
-                output=args.output or "dp_params.pkl",
+                output=args.output or "dp_params.json",
                 epsilon=args.epsilon,
                 delta=args.delta,
                 max_grad_norm=args.max_grad_norm,
@@ -174,7 +177,7 @@ def main(argv: list[str] | None = None) -> None:
             from fl.keys.zkp import generate
 
             generate(
-                output=args.output or "zkp_params.pkl",
+                output=args.output or "zkp_params.json",
                 bit_length=args.bit_length,
                 overwrite=overwrite,
             )
@@ -187,6 +190,11 @@ def main(argv: list[str] | None = None) -> None:
                 num_clients=args.num_clients,
                 enable_fhe=not args.no_fhe,
             )
+
+        elif mode == "he_elgamal":
+            from fl.keys.he_elgamal import generate
+
+            generate(overwrite=overwrite)
 
     except (FileExistsError, FileNotFoundError, RuntimeError) as exc:
         print(f"\n[ERROR] {exc}", file=sys.stderr)

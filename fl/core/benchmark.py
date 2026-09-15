@@ -52,10 +52,22 @@ class BenchmarkMetrics:
         default_factory=list
     )  # F1-optimal decision threshold
 
+    # Per-round outcome reports recorded by the server strategy
+    round_outcomes: List[Dict] = field(default_factory=list)
+
     # Metadata
     mode: str = "baseline"  # baseline, he, zkp
     num_clients: int = 0
     rounds: int = 0
+    # "network": real server and client processes, real ciphertexts and proofs.
+    # "simulated": in-process Flower simulation; HE modes transport plaintext.
+    transport: str = "network"
+    # ZKP backend the run used ("gnark", or "pedersen" for the unverified stub); None without ZKP.
+    zkp_backend: Optional[str] = None
+
+    def add_round_outcome(self, report: Dict):
+        """Record how a round ended (aggregated, rejected clients, aborted)."""
+        self.round_outcomes.append(dict(report))
 
     def add_client_get_params(self, duration: float):
         """Add client parameter retrieval time."""
@@ -171,6 +183,8 @@ class BenchmarkMetrics:
             "mode": self.mode,
             "num_clients": self.num_clients,
             "rounds": self.rounds,
+            "transport": self.transport,
+            "zkp_backend": self.zkp_backend,
             "timing": {
                 "client_get_params": stats(self.client_get_params_time),
                 "client_fit": stats(self.client_fit_time),
@@ -203,6 +217,7 @@ class BenchmarkMetrics:
                 "test_auprc": stats(self.test_auprc),
                 "test_threshold": stats(self.test_threshold),
             },
+            "round_outcomes": list(self.round_outcomes),
         }
 
     def save(self, filepath: str):
@@ -395,21 +410,31 @@ def estimate_params_size(parameters) -> int:
 _global_benchmark: Optional[BenchmarkMetrics] = None
 
 
-def init_benchmark(mode: str, num_clients: int, rounds: int) -> BenchmarkMetrics:
+def init_benchmark(
+    mode: str,
+    num_clients: int,
+    rounds: int,
+    transport: str = "network",
+    zkp_backend: Optional[str] = None,
+) -> BenchmarkMetrics:
     """
     Initialize global benchmark metrics.
 
     Args:
-        mode: "baseline", "he", or "zkp"
+        mode: privacy mode name
         num_clients: Number of clients
         rounds: Number of rounds
+        transport: "network" (real processes) or "simulated" (in-process, HE transports plaintext)
+        zkp_backend: ZKP backend used, or None for modes without ZKP
 
     Returns:
         BenchmarkMetrics instance
     """
+    if transport not in ("network", "simulated"):
+        raise ValueError(f"transport must be 'network' or 'simulated', got {transport!r}")
     global _global_benchmark
     _global_benchmark = BenchmarkMetrics(
-        mode=mode, num_clients=num_clients, rounds=rounds
+        mode=mode, num_clients=num_clients, rounds=rounds, transport=transport, zkp_backend=zkp_backend
     )
     return _global_benchmark
 

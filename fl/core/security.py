@@ -8,7 +8,7 @@ import os
 import zlib
 
 # For the homomorphic encryption
-import pickle
+import json
 import tenseal as ts
 from flwr.common import NDArray, NDArrays, Parameters
 from functools import reduce
@@ -386,44 +386,6 @@ def crypte(client_w, context_c, encrypt_layers=None):
     return encrypted
 
 
-def read_query(file_path):
-    """
-    This function is used to read a pickle file.
-
-    :param file_path: the path of the file to read
-    :return: the query and the context
-    """
-    if os.path.exists(file_path):
-        with open(file_path, "rb") as file:
-            """
-            # pickle.load(f)  # load to read file object
-
-            file_str = f.read()
-            client_query1 = pickle.loads(file_str)  # loads to read str class
-            """
-            query_str = pickle.load(file)
-
-        contexte = query_str["contexte"]  # ts.context_from(query["contexte"])
-        del query_str["contexte"]
-        return query_str, contexte
-
-    else:
-        print("The file doesn't exist")
-
-
-def write_query(file_path, client_query):
-    """
-    This function is used to write a pickle file.
-
-    :param file_path: the path of the file to write
-
-    :param client_query: the query to write
-    """
-    with open(file_path, "wb") as file:  # 'ab' to add existing file
-        encode_str = pickle.dumps(client_query)
-        file.write(encode_str)
-
-
 def deserialized_layer(name_layer, weight_array, ctx):
     """
     This function is used to deserialized a layer (crypted or not).
@@ -741,15 +703,25 @@ def apply_differential_privacy(
 
 def save_dp_params(params: DifferentialPrivacyParams, filepath: str):
     """Save DP parameters to file."""
-    with open(filepath, "wb") as f:
-        pickle.dump(params.to_dict(), f)
+    with open(filepath, "w") as f:
+        json.dump(params.to_dict(), f, indent=2)
+
+
+def _load_json_file(filepath: str, regenerate: str) -> dict:
+    """A JSON parameter file; legacy pickle files are refused because unpickling can execute code."""
+    try:
+        with open(filepath) as f:
+            return json.load(f)
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise ValueError(
+            f"{filepath} is not a JSON parameter file (legacy pickle files are no longer loaded). "
+            f"Regenerate: {regenerate}"
+        ) from exc
 
 
 def load_dp_params(filepath: str) -> DifferentialPrivacyParams:
     """Load DP parameters from file."""
-    with open(filepath, "rb") as f:
-        params_dict = pickle.load(f)
-    return DifferentialPrivacyParams.from_dict(params_dict)
+    return DifferentialPrivacyParams.from_dict(_load_json_file(filepath, "python -m fl.keys generate dp"))
 
 
 # /////////////////////// Concrete-ML (Enhanced Integration) \\\\\\\\\\\\\
@@ -1257,15 +1229,13 @@ def benchmark_fhe_inference(
 
 def save_concrete_config(config: ConcreteMLConfig, filepath: str):
     """Save Concrete-ML configuration to file."""
-    with open(filepath, "wb") as f:
-        pickle.dump(config.to_dict(), f)
+    with open(filepath, "w") as f:
+        json.dump(config.to_dict(), f, indent=2)
 
 
 def load_concrete_config(filepath: str) -> ConcreteMLConfig:
     """Load Concrete-ML configuration from file."""
-    with open(filepath, "rb") as f:
-        config_dict = pickle.load(f)
-    return ConcreteMLConfig.from_dict(config_dict)
+    return ConcreteMLConfig.from_dict(_load_json_file(filepath, "save_concrete_config(...)"))
 
 
 # /////////////////////// Concrete TFHE Integration (Option C) \\\\\\\\\\\\\\

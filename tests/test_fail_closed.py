@@ -14,7 +14,7 @@ import torch
 from flwr.common import Code, FitRes, Status, ndarrays_to_parameters, parameters_to_ndarrays
 
 import fl.core.zkp_gnark as zkp_gnark
-from tests.conftest import requires_gnark
+from tests.conftest import break_gnark, requires_gnark, use_gnark
 
 DEAD = "http://127.0.0.1:1"
 
@@ -49,9 +49,9 @@ def _clean_env(monkeypatch):
 
 
 @pytest.fixture
-def live(monkeypatch, gnark_service_url):
-    monkeypatch.setattr(zkp_gnark, "DEFAULT_SERVICE_URL", gnark_service_url)
-    return gnark_service_url
+def live(monkeypatch, gnark):
+    use_gnark(monkeypatch, gnark)
+    return gnark
 
 
 def _upload(weights=HONEST):
@@ -76,7 +76,7 @@ def _zkp_server():
 def test_client_proof_generation_failure_raises(monkeypatch):
     from fl.privacy.zkp import ZKPMode
 
-    monkeypatch.setattr(zkp_gnark, "DEFAULT_SERVICE_URL", DEAD)
+    break_gnark(monkeypatch, DEAD)
     with pytest.raises(RuntimeError):
         ZKPMode().send_parameters(TinyModel(HONEST), {"backend": "gnark"}, sim_mode=False)
 
@@ -169,7 +169,7 @@ def test_quorum_below_min_fit_clients_leaves_model_unchanged(live):
 def test_verification_service_outage_aborts_round(live, monkeypatch):
     upload = _upload()
     mode = _zkp_server()
-    monkeypatch.setattr(zkp_gnark, "DEFAULT_SERVICE_URL", DEAD)
+    break_gnark(monkeypatch, DEAD)
 
     aggregated, out = mode.aggregate_fit_override(1, [(NS(cid="c"), _fit(*upload))], [], None, _config())
 
@@ -180,7 +180,7 @@ def test_verification_service_outage_aborts_round(live, monkeypatch):
 
 
 def test_malformed_payload_counts_as_verification_failure(monkeypatch):
-    monkeypatch.setattr(zkp_gnark, "DEFAULT_SERVICE_URL", DEAD)
+    break_gnark(monkeypatch, DEAD)
     params = list(HONEST.values())
     ok, failed = zkp_gnark.verify_gnark_proofs(params, list(HONEST), [{"layer": "model.0.weight", "shape": [2, 2]}])
     assert not ok and "model.0.weight" in failed
@@ -220,7 +220,7 @@ def test_composite_service_outage_aborts_round(live, monkeypatch):
     upload = _upload()
     mode = HeTensealZKPMode()
     mode.bind_server_model(None, TinyModel())
-    monkeypatch.setattr(zkp_gnark, "DEFAULT_SERVICE_URL", DEAD)
+    break_gnark(monkeypatch, DEAD)
 
     params, out = mode.aggregate_fit_override(1, [(NS(cid="c"), _fit(*upload))], [], None, _config())
 

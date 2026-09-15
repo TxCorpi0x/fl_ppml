@@ -49,7 +49,12 @@ def start_service():
     with socket.socket() as s:
         s.bind(("127.0.0.1", 0))
         port = s.getsockname()[1]
-    proc = subprocess.Popen([str(BINARY)], env={**os.environ, "ZKP_SERVICE_PORT": str(port)},
+    from fl.core.gnark_keys import keys_dir, pk_dir
+
+    # Since Step 6 the service needs pinned keys; every chunk is padded to the
+    # manifest's fixed size, so prove time no longer shrinks with k.
+    proc = subprocess.Popen([str(BINARY), "serve", "--role", "prover", "--keys-dir", str(keys_dir()),
+                             "--pk-dir", str(pk_dir()), "--port", str(port)],
                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     url = f"http://127.0.0.1:{port}"
     for _ in range(100):
@@ -101,7 +106,7 @@ def smallest_m(n, s, target):
 
 def main():
     proc, url = start_service()
-    zkp_gnark.DEFAULT_SERVICE_URL = url
+    zkp_gnark.DEFAULT_PROVER_URL = url
     try:
         from fl.keys.he_elgamal import generate, load_client
 

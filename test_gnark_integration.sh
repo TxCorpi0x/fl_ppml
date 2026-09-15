@@ -35,7 +35,9 @@ fi
 
 # Test 2: Start service
 echo -e "${YELLOW}[Test 2/6]${NC} Starting gnark proof service on port ${SERVICE_PORT}..."
-"${SERVICE_DIR}/gnark_service" > "${SERVICE_LOG}" 2>&1 &
+# Needs pinned keys from: gnark_service setup --keys-dir zkp_gnark_service/keys --pk-dir ~/.cache/fl_ppml/gnark_pk
+"${SERVICE_DIR}/gnark_service" serve --role prover --keys-dir "${SERVICE_DIR}/keys" \
+    --pk-dir "${FL_ZKP_PK_DIR:-$HOME/.cache/fl_ppml/gnark_pk}" --port "${SERVICE_PORT}" > "${SERVICE_LOG}" 2>&1 &
 SERVICE_PID=$!
 sleep 2
 
@@ -153,7 +155,7 @@ PYTHON_TEST=$(python3 << 'EOF'
 import sys
 import os
 sys.path.insert(0, '.')
-os.environ['FL_ZKP_SERVICE_URL'] = 'http://127.0.0.1:9000'
+os.environ['FL_ZKP_PROVER_URL'] = 'http://127.0.0.1:9000'
 
 try:
     from fl.core.zkp_gnark import generate_gnark_proofs

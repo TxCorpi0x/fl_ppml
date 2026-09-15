@@ -124,7 +124,7 @@ class HeElGamalZKPMode(PrivacyMode):
         for chunk, (ct, proof_b64) in zip(chunks, outputs):
             offset = chunk.start * eg.CIPHERTEXT_BYTES
             layer_bytes[chunk.layer][offset : offset + len(ct)] = ct
-            proofs.append({"layer": chunk.layer, "chunk": chunk.index, "proof_b64": proof_b64})
+            proofs.append({"layer": chunk.layer, "chunk": chunk.index, "proof_b64": proof_b64, "vk_sha256": eg.pinned_vk()})
 
         self._proof_cache = (proofs, sum(len(p["proof_b64"]) for p in proofs))
         header = np.array([eg.HEADER_MAGIC, 1, server_round], dtype=np.int64)
@@ -241,8 +241,11 @@ class HeElGamalZKPMode(PrivacyMode):
         try:
             proofs = json.loads(metrics.get("zkp_proofs_json", ""))
             proof_map = {(int(p["layer"]), int(p["chunk"])): str(p["proof_b64"]) for p in proofs}
-        except (ValueError, TypeError, KeyError):
+            off_key = any(p.get("vk_sha256") != eg.pinned_vk() for p in proofs)
+        except (ValueError, TypeError, KeyError, AttributeError):
             return "missing or malformed proofs", []
+        if off_key:
+            return "proofs were not made under the pinned verifying key", []
         expected = {(c.layer, c.index) for c in chunks}
         if len(proof_map) != len(proofs) or set(proof_map) != expected:
             return f"proof coverage mismatch: {len(proof_map)} distinct proofs for {len(expected)} required chunks", []

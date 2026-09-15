@@ -118,14 +118,26 @@ python -m fl.keys generate zkp --output keys/zkp/zkp_params.pkl
 
 ### gnark ZKP Service (required for ZKP modes)
 
-Build and run the gnark-based ZKP HTTP service used by ZKP modes. The repository expects the binary name `gnark_service`.
+ZKP modes use a Go Groth16 service, split into two roles: clients prove against a **prover**, and the server verifies against a separate **verifier** that holds only verifying keys. Neither role runs setup. Both load pinned keys and refuse to start if the keys are missing or don't match the manifest (see [audit/setup.md](audit/setup.md)).
 
 ```bash
-cd zkp_gnark_service
-go build -o gnark_service main.go
-./gnark_service &    # listens on :9000 by default (or set ZKP_SERVICE_PORT)
-cd ..
+cd zkp_gnark_service && go build -o gnark_service . && cd ..
 ```
+
+The verifying keys and `manifest.json` are committed in `zkp_gnark_service/keys/`. Proving keys (hundreds of MB) are not committed; they live in a local cache. On a fresh checkout they must be regenerated. That run also re-pins the verifying keys, so commit the new `keys/` directory:
+
+```bash
+zkp_gnark_service/gnark_service setup --keys-dir zkp_gnark_service/keys --pk-dir ~/.cache/fl_ppml/gnark_pk --force
+```
+
+`compare.py` starts both roles itself. To run them by hand:
+
+```bash
+zkp_gnark_service/gnark_service serve --role prover --keys-dir zkp_gnark_service/keys --pk-dir ~/.cache/fl_ppml/gnark_pk --port 9000 &
+zkp_gnark_service/gnark_service serve --role verifier --keys-dir zkp_gnark_service/keys --port 9001 &
+```
+
+Every proof carries the SHA-256 of the verifying key it was made under. The server rejects any proof whose key isn't the pinned one, and each `round_outcomes` entry records the manifest hash. The setup is **single-party**: whoever ran `setup` could forge proofs. See audit/setup.md for what a multi-party ceremony would change.
 
 ---
 
@@ -477,7 +489,10 @@ All tuning is via environment variables — no code changes required. Variables 
 | `FL_CONCRETE_TFHE_FORCE_REAL` | `0` | `1` = run real TFHE on image datasets (high RAM) |
 | `FL_CONCRETE_TFHE_ALLOW_SIMULATED` | `0` | `1` = knowingly send plaintext quantized weights on image datasets; otherwise TFHE on images refuses to run |
 | `FL_ELGAMAL_SCALE` | `1000` | `he_elgamal_zkp` quantization: q = round(w·scale), \|q\| < 2¹⁷ |
-| `FL_ELGAMAL_CHUNK` | `128` | `he_elgamal_zkp` coordinates per proof |
+| `FL_ZKP_PROVER_URL` | `http://127.0.0.1:9000` | gnark prover role (clients) |
+| `FL_ZKP_VERIFIER_URL` | `http://127.0.0.1:9001` | gnark verifier role (server) |
+| `FL_ZKP_KEYS_DIR` | `zkp_gnark_service/keys` | Pinned manifest and verifying keys. The circuit sizes (norm chunk, ElGamal coordinates per proof) come from this manifest |
+| `FL_ZKP_PK_DIR` | `~/.cache/fl_ppml/gnark_pk` | Proving-key cache (prover only) |
 | `FL_CONCRETE_TFHE_BIT_WIDTH` | `14` | TFHE quantization bit width (2–16). Lower = more accuracy loss |
 | `FL_CONCRETE_TFHE_ADAPTIVE_QUANT` | `0` | `1` = per-layer quantization scale fitting (~0.5–1% accuracy recovery) |
 
@@ -496,7 +511,9 @@ All tuning is via environment variables — no code changes required. Variables 
 
 | Issue | Cause | Fix |
 |-------|-------|-----|
-| ZKP modes: `Connection refused :9000` | gnark service not running | `cd zkp_gnark_service && ./gnark_service` |
+| ZKP modes: `Connection refused :9000`/`:9001` | gnark prover/verifier not running | see "gnark ZKP Service" above; `compare.py` starts both |
+| `No pinned ZKP key manifest` / `Proving keys … not in` | keys never generated on this machine | run `gnark_service setup` (above) |
+| `HTTP 503 … verifying key` | service started from different keys than the manifest | restart the services from `zkp_gnark_service/keys` |
 | `proof_verification = 0.0` in results | Pedersen backend selected | `export FL_ZKP_BACKEND=gnark` |
 | TenSEAL `scale out of bounds` | CKKS coefficient overflow | Already fixed; ensure `global_scale=2^40` |
 | TFHE accuracy 2–3% lower | int8 quantization error | Expected trade-off |

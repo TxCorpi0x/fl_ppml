@@ -16,7 +16,7 @@ import fl.core.sampling as sampling
 import fl.core.zkp_gnark as zkp_gnark
 from fl.core import elgamal_gnark as eg
 from fl.privacy.he_elgamal_zkp_sampled import HeElGamalZKPSampledMode
-from tests.conftest import requires_gnark
+from tests.conftest import break_gnark, requires_gnark, use_gnark
 
 pytestmark = requires_gnark
 
@@ -35,9 +35,8 @@ def keys(tmp_path_factory):
 
 
 @pytest.fixture(autouse=True)
-def _env(monkeypatch, gnark_service_url):
-    monkeypatch.setattr(zkp_gnark, "DEFAULT_SERVICE_URL", gnark_service_url)
-    monkeypatch.setenv("FL_ELGAMAL_CHUNK", "2")
+def _env(monkeypatch, gnark):
+    use_gnark(monkeypatch, gnark)
     monkeypatch.setenv("FL_ELGAMAL_SCALE", "1000")
     monkeypatch.setenv("FL_ZKP_MAX_NORM", "100.0")
     monkeypatch.setenv("FL_ZKP_SAMPLE_PCT", "0.3")  # 3 of 10 coordinates
@@ -145,7 +144,7 @@ def test_server_verification_outage_aborts_the_challenge(keys, monkeypatch):
     commit, _ = _step(client, ctx, server, 1, _net())
     server.aggregate_fit_override(1, [(NS(cid="c"), _fit(commit))], [], sctx, keys)
     response = _step(client, ctx, server, 2, _net())
-    monkeypatch.setattr(zkp_gnark, "DEFAULT_SERVICE_URL", "http://127.0.0.1:1")
+    break_gnark(monkeypatch)
 
     params, out = server.aggregate_fit_override(2, [(NS(cid="c"), _fit(*response))], [], sctx, keys)
 

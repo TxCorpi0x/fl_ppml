@@ -15,7 +15,7 @@ from flwr.common import Code, FitRes, Status, ndarrays_to_parameters, parameters
 import fl.core.zkp_gnark as zkp_gnark
 from fl.core.sampling import sample_indices, sample_size
 from fl.privacy.zkp_sampled import ZKPSampledMode
-from tests.conftest import requires_gnark
+from tests.conftest import requires_gnark, use_gnark
 
 pytestmark = requires_gnark
 
@@ -33,8 +33,8 @@ CONFIG = NS(sim_mode=False, zkp_backend="gnark", zkp_gnark_host="test", min_fit_
 
 
 @pytest.fixture(autouse=True)
-def _env(monkeypatch, gnark_service_url):
-    monkeypatch.setattr(zkp_gnark, "DEFAULT_SERVICE_URL", gnark_service_url)
+def _env(monkeypatch, gnark):
+    use_gnark(monkeypatch, gnark)
     monkeypatch.setenv("FL_ZKP_SAMPLE_PCT", "0.4")  # 15 coordinates → 6 sampled
     for var in ("FL_ZKP_BACKEND", "FL_ZKP_LAYERS"):
         monkeypatch.delenv(var, raising=False)

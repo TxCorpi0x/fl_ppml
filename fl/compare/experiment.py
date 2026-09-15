@@ -71,28 +71,46 @@ def cleanup_all_procs() -> None:
 # gnark ZKP service lifecycle
 # ─────────────────────────────────────────────────────────────────────────────
 
-_GNARK_PROC: Optional[subprocess.Popen] = None
+_GNARK_PROCS: Dict[str, subprocess.Popen] = {}
+
+# Role → (env var, default URL). Clients prove against the prover; the server
+# verifies against a separate verifier that holds only verifying keys.
+_GNARK_ROLES = {
+    "prover": ("FL_ZKP_PROVER_URL", "http://127.0.0.1:9000"),
+    "verifier": ("FL_ZKP_VERIFIER_URL", "http://127.0.0.1:9001"),
+}
 
 
-def _gnark_service_url() -> str:
-    return os.environ.get("FL_ZKP_SERVICE_URL", "http://127.0.0.1:9000").rstrip("/")
+def _gnark_url(role: str) -> str:
+    env_var, default = _GNARK_ROLES[role]
+    return os.environ.get(env_var, default).rstrip("/")
 
 
-def _gnark_port() -> int:
-    url = _gnark_service_url()
+def _gnark_port(role: str) -> int:
     try:
-        return int(url.rsplit(":", 1)[-1])
+        return int(_gnark_url(role).rsplit(":", 1)[-1])
     except ValueError:
-        return 9000
+        return int(_GNARK_ROLES[role][1].rsplit(":", 1)[-1])
 
 
-def _gnark_is_healthy() -> bool:
-    """Return True if the gnark service responds to /health."""
+def _gnark_health(role: str) -> Optional[dict]:
+    """The service's /health JSON, or None if nothing healthy answers."""
     try:
-        with urllib.request.urlopen(_gnark_service_url() + "/health", timeout=2) as r:
-            return r.status == 200
+        with urllib.request.urlopen(_gnark_url(role) + "/health", timeout=2) as r:
+            return json.loads(r.read()) if r.status == 200 else None
     except Exception:
-        return False
+        return None
+
+
+def _gnark_matches_pin(role: str, health: Optional[dict]) -> bool:
+    """True only if a service answers in this role under the pinned manifest.
+
+    A legacy service (per-process keys, no role) or one started from other keys
+    fails this check and is replaced rather than reused.
+    """
+    from fl.core.gnark_keys import manifest_sha256
+
+    return bool(health) and health.get("role") == role and health.get("manifest_sha256") == manifest_sha256()
 
 
 def _kill_port(port: int) -> None:
@@ -124,26 +142,39 @@ def _needs_gnark(mode_cfg: ModeConfig) -> bool:
 
 
 def _ensure_gnark_service(log_dir: str) -> bool:
-    """Start the gnark ZKP HTTP service if it is not already healthy.
+    """Start the gnark prover and verifier services under the pinned keys.
 
     Build order:
       1. If a pre-built binary ``zkp_gnark_service/gnark_service`` exists, use it.
       2. Otherwise, run ``go build -o gnark_service .`` in that directory.
-      3. Kill whatever stale process is on the gnark port first.
 
-    Returns True only if the service is healthy; ZKP modes must not run otherwise.
+    A running service is reused only if it reports the expected role and the
+    pinned manifest hash; anything else on the port is killed and replaced.
+    Returns True only if both roles are up; ZKP modes must not run otherwise.
     """
-    global _GNARK_PROC
+    from fl.core.gnark_keys import keys_dir, load_manifest, missing_proving_keys, pk_dir
 
-    if _gnark_is_healthy():
-        print("[gnark] Service already healthy — reusing running instance.")
-        return True
+    try:
+        load_manifest()
+        missing = missing_proving_keys()
+    except (OSError, ValueError, KeyError) as exc:
+        print(f"[gnark] [ERROR] Pinned ZKP keys unusable: {exc}")
+        return False
+    if missing:
+        print(
+            f"[gnark] [ERROR] Proving keys {missing} not in {pk_dir()}. They are not committed; "
+            f"regenerate with: zkp_gnark_service/gnark_service setup --keys-dir {keys_dir()} "
+            f"--pk-dir {pk_dir()} --force (this re-pins the verifying keys, commit the result)"
+        )
+        return False
 
-    port = _gnark_port()
-    print(f"[gnark] Clearing port {port}...")
-    _kill_port(port)
-    time.sleep(0.5)
+    binary = _gnark_binary()
+    if binary is None:
+        return False
+    return all(_ensure_gnark_role(role, binary, log_dir) for role in _GNARK_ROLES)
 
+
+def _gnark_binary() -> Optional[str]:
     # Locate service directory relative to this file:
     # fl/compare/experiment.py → ../../zkp_gnark_service/
     here = os.path.dirname(os.path.abspath(__file__))
@@ -169,7 +200,7 @@ def _ensure_gnark_service(log_dir: str) -> bool:
             print(
                 "[gnark] [ERROR] 'go' not in PATH and no pre-built binary found — cannot start gnark service."
             )
-            return False
+            return None
         print(f"[gnark] Building gnark service binary...")
         result = subprocess.run(
             ["go", "build", "-o", "gnark_service", "."],
@@ -180,41 +211,59 @@ def _ensure_gnark_service(log_dir: str) -> bool:
         )
         if result.returncode != 0:
             print(f"[gnark] [ERROR] Build failed:\n{result.stderr}")
-            return False
+            return None
         print("[gnark] Build OK.")
+    return binary
+
+
+def _ensure_gnark_role(role: str, binary: str, log_dir: str) -> bool:
+    from fl.core.gnark_keys import keys_dir, pk_dir
+
+    health = _gnark_health(role)
+    if _gnark_matches_pin(role, health):
+        print(f"[gnark] {role} already healthy under the pinned manifest — reusing it.")
+        return True
+
+    port = _gnark_port(role)
+    if health is not None:
+        print(f"[gnark] Service on port {port} is not a pinned {role} ({health}) — replacing it.")
+    _kill_port(port)
+    time.sleep(0.5)
 
     os.makedirs(log_dir, exist_ok=True)
-    gnark_log_path = os.path.join(log_dir, "gnark_service.log")
-    gnark_log = open(gnark_log_path, "w")
+    log_path = os.path.join(log_dir, f"gnark_{role}.log")
+    cmd = [binary, "serve", "--role", role, "--keys-dir", str(keys_dir()), "--port", str(port)]
+    if role == "prover":
+        cmd += ["--pk-dir", str(pk_dir())]  # the verifier never gets proving keys
 
-    env = os.environ.copy()
-    env["ZKP_SERVICE_PORT"] = str(port)
-
-    _GNARK_PROC = _register_proc(
-        subprocess.Popen(
-            [binary],
-            cwd=svc_dir,
-            stdout=gnark_log,
-            stderr=subprocess.STDOUT,
-            env=env,
-            preexec_fn=os.setsid if hasattr(os, "setsid") else None,
-        )
-    )
-    print(f"[gnark] Service starting on port {port} (log: {gnark_log_path})")
-
-    for i in range(30):
-        time.sleep(1)
-        if _gnark_is_healthy():
-            print(f"[gnark] [OK] Healthy after {i + 1}s")
-            return True
-        if _GNARK_PROC.poll() is not None:
-            print(
-                f"[gnark] [ERROR] Service exited early (rc={_GNARK_PROC.returncode})."
-                f" Check {gnark_log_path}"
+    with open(log_path, "w") as log:
+        proc = _register_proc(
+            subprocess.Popen(
+                cmd,
+                cwd=os.path.dirname(binary),
+                stdout=log,
+                stderr=subprocess.STDOUT,
+                preexec_fn=os.setsid if hasattr(os, "setsid") else None,
             )
+        )
+    _GNARK_PROCS[role] = proc
+    print(f"[gnark] {role} starting on port {port} (log: {log_path})")
+
+    # Loading the prover's proving keys takes tens of seconds at production sizes.
+    for i in range(180):
+        time.sleep(1)
+        health = _gnark_health(role)
+        if health is not None:
+            if not _gnark_matches_pin(role, health):
+                print(f"[gnark] [ERROR] {role} came up with an unexpected manifest: {health}")
+                return False
+            print(f"[gnark] [OK] {role} healthy after {i + 1}s")
+            return True
+        if proc.poll() is not None:
+            print(f"[gnark] [ERROR] {role} exited early (rc={proc.returncode}). Check {log_path}")
             return False
 
-    print("[gnark] [ERROR] Timeout waiting for gnark service to become healthy.")
+    print(f"[gnark] [ERROR] Timeout waiting for gnark {role} to become healthy.")
     return False
 
 

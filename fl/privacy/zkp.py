@@ -69,6 +69,13 @@ def round_report(server_round: int, outcome: str, admitted, rejected: Dict, deta
     }
     if detail:
         report["detail"] = detail
+    try:
+        from fl.core.gnark_keys import manifest_sha256
+
+        # Which pinned verifying keys this round's proofs were checked under (audit/setup.md).
+        report["key_manifest_sha256"] = manifest_sha256()
+    except (OSError, ValueError, KeyError):
+        pass
     return report
 
 

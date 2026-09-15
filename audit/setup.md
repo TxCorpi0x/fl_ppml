@@ -88,3 +88,87 @@ Setup is paid inside the first proof for each circuit size in each service lifet
 - **Proving-key storage.** ElGamal keys for n = 128 are large. They could be generated on first `setup` and cached outside git, or published as release artifacts.
 
 **Stopping here, as Step 6 Phase 1 requires.**
+
+---
+
+## Phase 2: pinned keys, split roles (implemented)
+
+Decisions taken: **one fixed size per circuit with padding**, and **proving keys in a local cache** outside git.
+
+### What changed
+
+| Area | Change |
+|---|---|
+| `gnark_service setup` (`zkp_gnark_service/keys.go`) | Compiles the norm circuit (n = 256) and the ElGamal circuit (n = 128) and runs `groth16.Setup` once for each. It writes `<circuit>-<n>.vk` and `manifest.json` (circuit, n, constraint count, SHA-256 of vk and pk, gnark version, date, a single-party note) to `--keys-dir`. Proving keys go to `--pk-dir` with mode 0600. It refuses to overwrite existing keys without `--force` |
+| `gnark_service serve --role prover\|verifier` | **No lazy setup anywhere.** The prover loads each pk (hash-checked against the manifest), compiles the circuit and checks the constraint count; it serves only `/prove`, `/elgamal/{prove,prove_with,encrypt,decrypt,info}`. The verifier loads only the vks (hash-checked) and serves only `/verify`, `/verify_light`, `/elgamal/{verify,aggregate}`. It never receives `--pk-dir`. Either role exits at startup if a file is missing or its hash differs from the manifest |
+| Padding | Norm circuit: values zero-padded to n before hashing, so the hash is over the padded vector and zeros add nothing to Σw². ElGamal circuit: padded slots carry `v = offset` (plaintext 0) with `r = 0`, and the verifier rebuilds the same deterministic padding ciphertexts, so a client can't choose them. Inputs longer than n are refused (400) |
+| Pinned identity | Every proof payload carries `vk_sha256`. The client checks that the prover answered under the pinned key. The server rejects a proof whose `vk_sha256` isn't the manifest's, and sends **its own** pinned hash with every verify request; a verifier holding a different key answers 503, which the Python side treats as an infrastructure abort (fail closed, Step 4). The chain anchor hashes the proof payload, so the vk hash is anchored; `round_outcomes` entries record `key_manifest_sha256` |
+| Python (`fl/core/gnark_keys.py`, `zkp_gnark.py`, `elgamal_gnark.py`) | `FL_ZKP_PROVER_URL` (:9000) and `FL_ZKP_VERIFIER_URL` (:9001) replace `FL_ZKP_SERVICE_URL`. Chunk sizes come from the manifest; `FL_ZKP_MAX_LAYER_N` and `FL_ELGAMAL_CHUNK` are gone |
+| Harness (`fl/compare/experiment.py`) | Fails ZKP modes if the manifest or a proving key is missing. It starts both roles, and reuses a running service only if `/health` reports the expected role **and** manifest hash; anything else on the port (for example the stale pre-Step-6 service that broke run C in Step 5) is killed and replaced |
+| Committed keys | `zkp_gnark_service/keys/{manifest.json, norm-256.vk, elgamal-128.vk}` (`.gitignore` negated for that directory) |
+
+### Evidence (`audit/evidence/setup_evidence.py`, rewritten for Phase 2)
+
+The script runs `setup` into a temporary directory (norm n = 8, ElGamal n = 4). It then starts one prover, two verifiers from the same keys, and one verifier from a second, independent setup:
+
+```
+Q1  norm: prove on P, verify on V1           -> True
+    norm: prove on P, verify on V2           -> True
+    plaintext /verify (hash recomputed) on V2 -> True
+Q3  elgamal: prove on P, verify on V1        -> True
+Q3  elgamal: prove on P, verify on V2        -> True
+Q2  norm: prove on P, restart V1, verify     -> True
+    elgamal: prove on P, restart V1, verify  -> True
+Q4  norm: verify on verifier with other keys -> refused (GnarkServiceError: …/verify_light: HTTP 503)
+    elgamal: same                            -> refused (ElGamalServiceError: /elgamal/verify: HTTP 503 verifying key mismatch …)
+Q5  POST verifier/prove                      -> HTTP 404
+    POST verifier/elgamal/prove              -> HTTP 404
+    POST prover/verify_light                 -> HTTP 404
+    verifier started without --pk-dir         -> healthy: True
+Q6  first proof n=8 (padded): 0.280 s; second: 0.177 s
+```
+
+Every Phase 1 failure is reversed: separate processes and restarts verify (Q1–Q3). A different setup is refused loudly rather than silently mixed (Q4), and the roles are separated (Q5). The first-versus-second gap in Q6 is now connection and runtime warm-up only; setup no longer runs inside a request.
+
+The same properties are covered by tests:
+- `tests/test_gnark_service_roundtrip.py`: separate verifier, restart, foreign keys → 503, role 404s.
+- `zkp_gnark_service/keys_test.go`: setup → load per role, tampered pk/vk refused, overwrite refused, padded ElGamal across separate stores, vk mismatch → 503, oversize → 400.
+- All ZKP tests now run against separate prover and verifier processes, using small keys generated per test session (`tests/conftest.py`), never the committed ones.
+
+Results: Go `ok`; Python `103 passed, 1 xfailed` (the xfail is the documented S1-01 CKKS composite).
+
+### Production keys (this machine: Apple Silicon, `gnark_service setup`, 2026-09-15)
+
+| Circuit | n | Constraints | Setup time | vk | pk |
+|---|---|---|---|---|---|
+| norm | 256 | 86,725 | 4.4 s | 520 B | 30.8 MB |
+| elgamal | 128 | 805,082 | 30.4 s | 17.0 KB | 245.7 MB |
+
+Setup peak memory: 1.6 GB. Measured through the harness with these keys:
+- Both roles healthy in 4.2 s; a second `_ensure_gnark_service` reused them in 0.0 s.
+- A foreign HTTP server on :9001 was replaced (5.2 s).
+- A 2,914-parameter layer took **12 norm proofs in 7.79 s**; `verify_light` 0.02 s; full verify True.
+- ElGamal prove took 2.02 s for k = 128 and **1.23 s for k = 7**. Before padding, the Step 5 fit predicted about 0.16 s for k = 7.
+
+### Costs and consequences of padding
+
+- **A short chunk now costs the same as a full one.** The prove-time model `t(k) = 0.055 + 15.0 ms·k` in `audit/sampling.md` and `audit/tables/sampling_tradeoff.*` assumed per-size circuits. With padding, each sampled ElGamal chunk costs about t(128) regardless of k, so the sampled-mode proving estimates there are **optimistic for the final partial chunk and must be regenerated** before they're cited. `audit/evidence/sampling_tradeoff.py` now starts a pinned prover, but it hasn't been re-run for this report.
+- **The norm chunk shrank from 2,000 to 256 values**, so full `zkp` proves about 8× more, smaller proofs per layer. A larger n means fewer proofs but a bigger proving key and more prover memory. It's one setup flag (`--norm-n`), but changing it re-pins the key.
+- **Stored benchmark results predate this change.** Their proving times include in-request setup (Phase 1, "Cost of setup today") and different chunk sizes, so they're not comparable with new runs.
+
+### What a single-party setup guarantees, and what it doesn't
+
+**Guaranteed now:**
+- Every prover and verifier uses the *same* published verifying key, identified by hash.
+- Proofs stay verifiable after restarts and by independent verifiers, and anyone holding the committed `.vk` can re-check an anchored proof.
+- The verifier process never holds proving keys or setup randomness.
+
+**Not guaranteed:** that the setup randomness (τ, α, β, γ, δ) was destroyed.
+- It existed in the memory of the one `gnark_service setup` process.
+- Whoever ran that process, or tampered with that binary, can forge proofs for false statements (norm bounds, ciphertext binding) that every verifier will accept.
+- Pinning makes keys consistent, not trustworthy. Knowledge soundness holds against provers who didn't run setup.
+
+**What a ceremony would change:**
+- A Powers-of-Tau phase 1 (universal, reusable, for example the public BN254 transcripts), followed by a per-circuit phase-2 MPC in which several independent parties contribute to δ, makes forgery require collusion of *all* contributors. The manifest would then record the transcript and contribution hashes instead of "single-party".
+- gnark v0.10 has an MPC setup package (`backend/groth16/bn254/mpcsetup`), but this repository doesn't use it, and a real ceremony is out of scope.
+- Until one is run, claims should read: *"Groth16 with a single-party trusted setup; integrity holds against clients who did not generate the keys."*

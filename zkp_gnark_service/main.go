@@ -5,71 +5,62 @@ import (
 	"encoding/base64"
 	"encoding/binary"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"math/big"
 	"net/http"
 	"os"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/consensys/gnark-crypto/ecc"
 	"github.com/consensys/gnark-crypto/ecc/bn254/fr"
 	cryptomimc "github.com/consensys/gnark-crypto/ecc/bn254/fr/mimc"
 	"github.com/consensys/gnark/backend/groth16"
-	"github.com/consensys/gnark/constraint"
 	"github.com/consensys/gnark/frontend"
-	"github.com/consensys/gnark/frontend/cs/r1cs"
 	gnarkmimc "github.com/consensys/gnark/std/hash/mimc"
 )
 
 type proofRequest struct {
-	LayerName string `json:"layer_name"`
+	LayerName  string `json:"layer_name"`
 	WeightsB64 string `json:"weights_b64"`
-	Shape []int `json:"shape"`
-	Scale string `json:"scale"`
-	BoundSq string `json:"bound_sq"`
-	ProofB64 string `json:"proof_b64"`
+	Shape      []int  `json:"shape"`
+	Scale      string `json:"scale"`
+	BoundSq    string `json:"bound_sq"`
+	ProofB64   string `json:"proof_b64"`
+	VKSHA256   string `json:"vk_sha256"`
 }
 
 // verifyLightRequest is the payload for /verify_light.
 // No weights required — only public SNARK inputs.
 type verifyLightRequest struct {
 	LayerName string `json:"layer_name"`
-	Shape     []int  `json:"shape"`    // used to derive circuit size n = ∏shape
+	Shape     []int  `json:"shape"`    // number of real values; the circuit pads to its fixed size
 	BoundSq   string `json:"bound_sq"` // public input: Σwᵢ² ≤ bound
-	HashHex   string `json:"hash_hex"` // public input: MiMC_hash(w)
+	HashHex   string `json:"hash_hex"` // public input: MiMC hash of the padded vector
 	ProofB64  string `json:"proof_b64"`
+	VKSHA256  string `json:"vk_sha256"`
 }
 
 type proofResponse struct {
-	ProofB64 string `json:"proof_b64"`
-	HashHex string `json:"hash_hex"`
-	Verified bool `json:"verified"`
-	Error string `json:"error,omitempty"`
+	ProofB64 string `json:"proof_b64,omitempty"`
+	HashHex  string `json:"hash_hex,omitempty"`
+	Verified bool   `json:"verified"`
+	VKSHA256 string `json:"vk_sha256,omitempty"`
+	CircuitN int    `json:"circuit_n,omitempty"`
+	Error    string `json:"error,omitempty"`
 }
-
-type circuitCache struct {
-	cs constraint.ConstraintSystem
-	pk groth16.ProvingKey
-	vk groth16.VerifyingKey
-}
-
-var (
-	cacheMu sync.Mutex
-	cache = map[int]*circuitCache{}
-)
 
 type proofCircuit struct {
 	Weights []frontend.Variable
-	Bound frontend.Variable `gnark:",public"`
-	Hash frontend.Variable `gnark:",public"`
+	Bound   frontend.Variable `gnark:",public"`
+	Hash    frontend.Variable `gnark:",public"`
 }
 
 func (c *proofCircuit) Define(api frontend.API) error {
 	hasher, _ := gnarkmimc.NewMiMC(api)
-	sum := api.Sub(0, 0)  // Start with zero
+	sum := api.Sub(0, 0) // Start with zero
 	for _, w := range c.Weights {
 		hasher.Write(w)
 		sq := api.Mul(w, w)
@@ -79,28 +70,6 @@ func (c *proofCircuit) Define(api frontend.API) error {
 	api.AssertIsEqual(hash, c.Hash)
 	api.AssertIsLessOrEqual(sum, c.Bound)
 	return nil
-}
-
-func getCircuit(n int) (*circuitCache, error) {
-	cacheMu.Lock()
-	defer cacheMu.Unlock()
-
-	if cached, ok := cache[n]; ok {
-		return cached, nil
-	}
-
-	circuit := &proofCircuit{Weights: make([]frontend.Variable, n)}
-	cs, err := frontend.Compile(ecc.BN254.ScalarField(), r1cs.NewBuilder, circuit)
-	if err != nil {
-		return nil, err
-	}
-	pk, vk, err := groth16.Setup(cs)
-	if err != nil {
-		return nil, err
-	}
-	cached := &circuitCache{cs: cs, pk: pk, vk: vk}
-	cache[n] = cached
-	return cached, nil
 }
 
 func decodeWeights(req proofRequest) ([]*big.Int, error) {
@@ -120,6 +89,20 @@ func decodeWeights(req proofRequest) ([]*big.Int, error) {
 		weights[i] = big.NewInt(val)
 	}
 	return weights, nil
+}
+
+// padWeights appends zeros up to the circuit's fixed size. Zeros add nothing
+// to the norm, and the hash covers the padded vector on both sides.
+func padWeights(weights []*big.Int, n int) ([]*big.Int, error) {
+	if len(weights) == 0 || len(weights) > n {
+		return nil, fmt.Errorf("%d values do not fit the fixed circuit size %d", len(weights), n)
+	}
+	padded := make([]*big.Int, n)
+	copy(padded, weights)
+	for i := len(weights); i < n; i++ {
+		padded[i] = big.NewInt(0)
+	}
+	return padded, nil
 }
 
 func computeHash(weights []*big.Int) (*big.Int, error) {
@@ -151,11 +134,25 @@ func parseBigInt(value string) (*big.Int, error) {
 	return result, nil
 }
 
+// keyStatus maps key-store errors to HTTP status: a key mismatch is an
+// infrastructure fault (503), anything else a server error.
+func keyStatus(err error) int {
+	if errors.Is(err, errKeyMismatch) {
+		return http.StatusServiceUnavailable
+	}
+	return http.StatusInternalServerError
+}
+
 func proveHandler(w http.ResponseWriter, r *http.Request) {
 	start := time.Now()
 	var req proofRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	k, err := store.keys(normCircuitID)
+	if err != nil || k.pk == nil {
+		writeError(w, http.StatusInternalServerError, fmt.Errorf("this service cannot prove: %v", err))
 		return
 	}
 	weights, err := decodeWeights(req)
@@ -176,25 +173,24 @@ func proveHandler(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, fmt.Errorf("bound_sq exceeds field size"))
 		return
 	}
-
-	hashVal, err := computeHash(weights)
+	padded, err := padWeights(weights, k.n)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err)
+		writeError(w, http.StatusBadRequest, err)
 		return
 	}
 
-	cached, err := getCircuit(len(weights))
+	hashVal, err := computeHash(padded)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err)
 		return
 	}
 
 	assignment := &proofCircuit{
-		Weights: make([]frontend.Variable, len(weights)),
-		Bound: boundSq,
-		Hash: hashVal,
+		Weights: make([]frontend.Variable, k.n),
+		Bound:   boundSq,
+		Hash:    hashVal,
 	}
-	for i, wv := range weights {
+	for i, wv := range padded {
 		assignment.Weights[i] = wv
 	}
 
@@ -204,9 +200,9 @@ func proveHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	proof, err := groth16.Prove(cached.cs, cached.pk, witness)
+	proof, err := groth16.Prove(k.cs, k.pk, witness)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err)
+		writeError(w, http.StatusUnprocessableEntity, fmt.Errorf("statement not satisfied: %w", err))
 		return
 	}
 
@@ -220,9 +216,11 @@ func proveHandler(w http.ResponseWriter, r *http.Request) {
 	resp := proofResponse{
 		ProofB64: base64.StdEncoding.EncodeToString(buf.Bytes()),
 		HashHex:  fmt.Sprintf("%x", hashVal),
+		VKSHA256: k.vkHash,
+		CircuitN: k.n,
 	}
 
-	log.Printf("prove layer=%s n=%d took=%s", req.LayerName, len(weights), time.Since(start))
+	log.Printf("prove layer=%s n=%d/%d took=%s", req.LayerName, len(weights), k.n, time.Since(start))
 	writeJSON(w, http.StatusOK, resp)
 }
 
@@ -233,7 +231,23 @@ func verifyHandler(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
+	k, err := store.keys(normCircuitID)
+	if err == nil && k.vk == nil {
+		err = fmt.Errorf("%s role cannot verify", store.role)
+	}
+	if err == nil {
+		err = k.checkVK(req.VKSHA256)
+	}
+	if err != nil {
+		writeError(w, keyStatus(err), err)
+		return
+	}
 	weights, err := decodeWeights(req)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	padded, err := padWeights(weights, k.n)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err)
 		return
@@ -244,13 +258,7 @@ func verifyHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	hashVal, err := computeHash(weights)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, err)
-		return
-	}
-
-	cached, err := getCircuit(len(weights))
+	hashVal, err := computeHash(padded)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err)
 		return
@@ -261,7 +269,7 @@ func verifyHandler(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
-	
+
 	// Deserialize proof using gnark's native ReadFrom to avoid gob interface mismatch
 	proof := groth16.NewProof(ecc.BN254)
 	if _, err := proof.ReadFrom(bytes.NewReader(proofBytes)); err != nil {
@@ -272,7 +280,7 @@ func verifyHandler(w http.ResponseWriter, r *http.Request) {
 	// For verification we only need public inputs (Bound, Hash).
 	// Private Weights must be non-nil; set to zero (value doesn't affect public witness).
 	assignment := &proofCircuit{
-		Weights: make([]frontend.Variable, len(weights)),
+		Weights: make([]frontend.Variable, k.n),
 		Bound:   boundSq,
 		Hash:    hashVal,
 	}
@@ -290,25 +298,21 @@ func verifyHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	verified := groth16.Verify(proof, cached.vk, publicWitness) == nil
+	verified := groth16.Verify(proof, k.vk, publicWitness) == nil
 	resp := proofResponse{Verified: verified}
 	if !verified {
 		resp.Error = "proof verification failed"
 	}
 
-	log.Printf("verify layer=%s n=%d verified=%t took=%s", req.LayerName, len(weights), verified, time.Since(start))
+	log.Printf("verify layer=%s n=%d/%d verified=%t took=%s", req.LayerName, len(weights), k.n, verified, time.Since(start))
 	writeJSON(w, http.StatusOK, resp)
 }
 
 // verifyLightHandler — verify a Groth16 proof using only public inputs.
 //
-// The client (working under FHE) sends the proof alongside the committed
-// public inputs (hash_hex, bound_sq) that were embedded during proof
-// generation.  No plaintext weights are transmitted; the server re-uses the
-// cached verifying key (keyed on circuit size n = ∏shape) and verifies.
-//
-// This is the zero-knowledge path: the server learns nothing about the
-// weights beyond what the public inputs reveal.
+// The client sends the proof alongside the public inputs (hash_hex, bound_sq)
+// embedded during proof generation. No weights are transmitted; the pinned
+// verifying key for the norm circuit is used.
 func verifyLightHandler(w http.ResponseWriter, r *http.Request) {
 	start := time.Now()
 	var req verifyLightRequest
@@ -316,8 +320,18 @@ func verifyLightHandler(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
+	k, err := store.keys(normCircuitID)
+	if err == nil && k.vk == nil {
+		err = fmt.Errorf("%s role cannot verify", store.role)
+	}
+	if err == nil {
+		err = k.checkVK(req.VKSHA256)
+	}
+	if err != nil {
+		writeError(w, keyStatus(err), err)
+		return
+	}
 
-	// Derive circuit size from shape.
 	if len(req.Shape) == 0 {
 		writeError(w, http.StatusBadRequest, fmt.Errorf("shape must not be empty"))
 		return
@@ -326,8 +340,8 @@ func verifyLightHandler(w http.ResponseWriter, r *http.Request) {
 	for _, d := range req.Shape {
 		n *= d
 	}
-	if n <= 0 {
-		writeError(w, http.StatusBadRequest, fmt.Errorf("invalid shape: n=%d", n))
+	if n <= 0 || n > k.n {
+		writeError(w, http.StatusBadRequest, fmt.Errorf("shape holds %d values; the circuit takes at most %d", n, k.n))
 		return
 	}
 
@@ -344,13 +358,6 @@ func verifyLightHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	hashVal := new(big.Int).SetBytes(hashBytes)
 
-	// Look up (or compile) the verifying key for this circuit size.
-	cached, err := getCircuit(n)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, err)
-		return
-	}
-
 	// Decode proof.
 	proofBytes, err := base64.StdEncoding.DecodeString(req.ProofB64)
 	if err != nil {
@@ -363,10 +370,8 @@ func verifyLightHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Build public witness — private Weights field set to zero-length slice
-	// so gnark only serialises the public inputs (Bound, Hash).
 	assignment := &proofCircuit{
-		Weights: make([]frontend.Variable, n),
+		Weights: make([]frontend.Variable, k.n),
 		Bound:   boundSq,
 		Hash:    hashVal,
 	}
@@ -384,14 +389,14 @@ func verifyLightHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	verified := groth16.Verify(proof, cached.vk, publicWitness) == nil
+	verified := groth16.Verify(proof, k.vk, publicWitness) == nil
 	resp := proofResponse{Verified: verified}
 	if !verified {
 		resp.Error = "proof verification failed"
 	}
 
-	log.Printf("verify_light layer=%s n=%d verified=%t took=%s",
-		req.LayerName, n, verified, time.Since(start))
+	log.Printf("verify_light layer=%s n=%d/%d verified=%t took=%s",
+		req.LayerName, n, k.n, verified, time.Since(start))
 	writeJSON(w, http.StatusOK, resp)
 }
 
@@ -425,30 +430,29 @@ func writeJSON(w http.ResponseWriter, status int, payload any) {
 	_ = enc.Encode(payload)
 }
 
+const usage = `usage:
+  gnark_service setup --keys-dir DIR --pk-dir DIR [--norm-n 256] [--elgamal-n 128] [--force]
+  gnark_service serve --role prover|verifier --keys-dir DIR [--pk-dir DIR] [--port PORT]
+  gnark_service elgamal-keygen <secret.json> <public.json>`
+
 func main() {
-	if len(os.Args) > 1 && os.Args[1] == "elgamal-keygen" {
-		if err := runElgamalKeygen(os.Args[2:]); err != nil {
-			log.Fatal(err)
-		}
-		return
+	if len(os.Args) < 2 {
+		fmt.Fprintln(os.Stderr, usage)
+		os.Exit(2)
 	}
-
-	port := os.Getenv("ZKP_SERVICE_PORT")
-	if port == "" {
-		port = "9000"
+	var err error
+	switch os.Args[1] {
+	case "setup":
+		err = runSetup(os.Args[2:])
+	case "serve":
+		err = runServe(os.Args[2:])
+	case "elgamal-keygen":
+		err = runElgamalKeygen(os.Args[2:])
+	default:
+		fmt.Fprintln(os.Stderr, usage)
+		os.Exit(2)
 	}
-
-	http.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
-		writeJSON(w, http.StatusOK, map[string]string{"status": "ok", "service": "gnark-zkp"})
-	})
-	http.HandleFunc("/prove", proveHandler)
-	http.HandleFunc("/verify", verifyHandler)
-	http.HandleFunc("/verify_light", verifyLightHandler)
-	registerElgamalRoutes()
-
-	addr := ":" + port
-	log.Printf("gnark ZKP service listening on %s", addr)
-	if err := http.ListenAndServe(addr, nil); err != nil {
+	if err != nil {
 		log.Fatal(err)
 	}
 }

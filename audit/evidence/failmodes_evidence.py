@@ -22,7 +22,7 @@ from flwr.common import Code, FitRes, Status, ndarrays_to_parameters, parameters
 import fl.core.zkp_gnark as zg
 
 DEAD = "http://127.0.0.1:1"
-zg.DEFAULT_SERVICE_URL = DEAD
+zg.DEFAULT_PROVER_URL = zg.DEFAULT_VERIFIER_URL = DEAD  # before Step 6: zg.DEFAULT_SERVICE_URL
 
 
 def fit(params, metrics, n=10):

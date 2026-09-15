@@ -15,7 +15,7 @@ from flwr.common import Code, FitRes, Status, ndarrays_to_parameters, parameters
 import fl.core.zkp_gnark as zkp_gnark
 from fl.core import elgamal_gnark as eg
 from fl.privacy.he_elgamal_zkp import HeElGamalZKPMode
-from tests.conftest import requires_gnark
+from tests.conftest import break_gnark, requires_gnark, use_gnark
 
 pytestmark = requires_gnark
 
@@ -31,9 +31,8 @@ def keys(tmp_path_factory):
 
 
 @pytest.fixture(autouse=True)
-def _service(monkeypatch, gnark_service_url):
-    monkeypatch.setattr(zkp_gnark, "DEFAULT_SERVICE_URL", gnark_service_url)
-    monkeypatch.setenv("FL_ELGAMAL_CHUNK", "4")  # 8 + 2 parameters → chunks of 4, 4, 2
+def _service(monkeypatch, gnark):
+    use_gnark(monkeypatch, gnark)  # test keys: ElGamal chunk 4, so 8 + 2 parameters → chunks of 4, 4, 2
     monkeypatch.setenv("FL_ELGAMAL_SCALE", "1000")
     monkeypatch.setenv("FL_ZKP_MAX_NORM", "100.0")
 
@@ -163,7 +162,7 @@ def test_incomplete_or_rearranged_proof_coverage_is_rejected(keys, tamper):
 def test_unreachable_service_aborts_round_without_aggregating(keys, monkeypatch):
     params, metrics = _upload(keys, HONEST, 1)
     mode, ctx = _server(keys)
-    monkeypatch.setattr(zkp_gnark, "DEFAULT_SERVICE_URL", "http://127.0.0.1:1")
+    break_gnark(monkeypatch)
 
     aggregated, out = mode.aggregate_fit_override(1, [(SimpleNamespace(cid="c"), _fit_res(params, metrics, 10))], [], ctx, None)
 

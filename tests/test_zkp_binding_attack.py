@@ -20,7 +20,7 @@ from flwr.common import Code, FitRes, Status, ndarrays_to_parameters, parameters
 
 import fl.core.zkp_gnark as zkp_gnark
 from fl.core.zkp_gnark import generate_gnark_proofs
-from tests.conftest import requires_gnark
+from tests.conftest import requires_gnark, use_gnark
 
 pytestmark = requires_gnark
 
@@ -65,8 +65,8 @@ def _fit_res(params, proofs, layer_names):
 
 
 @pytest.fixture(autouse=True)
-def _gnark_backend(monkeypatch, gnark_service_url):
-    monkeypatch.setattr(zkp_gnark, "DEFAULT_SERVICE_URL", gnark_service_url)
+def _gnark_backend(monkeypatch, gnark):
+    use_gnark(monkeypatch, gnark)
     monkeypatch.delenv("FL_ZKP_BACKEND", raising=False)
     monkeypatch.delenv("FL_ZKP_LAYERS", raising=False)
 
@@ -87,10 +87,10 @@ def _plaintext_server():
 # ─── Controls ────────────────────────────────────────────────────────────────
 
 
-def test_control_poisoned_vector_cannot_be_proved(gnark_service_url):
+def test_control_poisoned_vector_cannot_be_proved(gnark):
     """The norm bound bites: the service refuses to prove the poisoned vector."""
     with pytest.raises(RuntimeError):
-        generate_gnark_proofs(_poisoned_weights(), service_url=gnark_service_url)
+        generate_gnark_proofs(_poisoned_weights(), service_url=gnark.prover)
 
 
 def test_control_plaintext_zkp_rejects_mismatched_params_with_full_layer_names(config):

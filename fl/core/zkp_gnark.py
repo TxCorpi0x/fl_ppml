@@ -12,7 +12,10 @@ import requests
 logger = logging.getLogger(__name__)
 from .zkp_utils import to_numpy, post_json
 
-DEFAULT_SERVICE_URL = os.environ.get("FL_ZKP_SERVICE_URL", "http://127.0.0.1:9000")
+# Clients prove against the prover service; the server verifies against a
+# separate verifier service holding only the pinned verifying keys.
+DEFAULT_PROVER_URL = os.environ.get("FL_ZKP_PROVER_URL", "http://127.0.0.1:9000")
+DEFAULT_VERIFIER_URL = os.environ.get("FL_ZKP_VERIFIER_URL", "http://127.0.0.1:9001")
 DEFAULT_SCALE = float(os.environ.get("FL_ZKP_SCALE", "1000000"))
 DEFAULT_MAX_NORM = float(os.environ.get("FL_ZKP_MAX_NORM", "100.0"))
 # Increased from 120 to 600: first chunk of a new size triggers gnark circuit
@@ -34,10 +37,23 @@ DEFAULT_VERIFY_LIGHT_TIMEOUT = float(
 DEFAULT_PARALLELISM = int(os.environ.get("FL_ZKP_PARALLELISM", "1"))
 DEFAULT_AGGRESSIVE_GC = os.environ.get("FL_ZKP_AGGRESSIVE_GC", "1")
 DEFAULT_GC_SLEEP_MS = float(os.environ.get("FL_ZKP_GC_SLEEP_MS", "0"))
-# Max elements per ZKP layer chunk.  Layers larger than this are split into
-# multiple chunks so the gnark service never compiles a circuit beyond ~664K
-# R1CS constraints (~2000 params × 332 constraints/param), which fits in RAM.
-DEFAULT_MAX_LAYER_N = int(os.environ.get("FL_ZKP_MAX_LAYER_N", "2000"))
+
+
+def norm_chunk_n() -> int:
+    """Fixed norm-circuit size from the pinned key manifest.
+
+    Layers larger than this are split into chunks of this size; shorter chunks
+    are zero-padded inside the service.
+    """
+    from fl.core.gnark_keys import NORM_CIRCUIT, circuit_size
+
+    return circuit_size(NORM_CIRCUIT)
+
+
+def pinned_norm_vk() -> str:
+    from fl.core.gnark_keys import NORM_CIRCUIT, pinned_vk_sha256
+
+    return pinned_vk_sha256(NORM_CIRCUIT)
 
 
 def _current_rss_mb() -> float:
@@ -207,7 +223,7 @@ def generate_gnark_proofs(
         proofs: list of proof payloads (JSON-serializable)
         proof_bytes: total encoded proof size in bytes
     """
-    service_url = service_url or DEFAULT_SERVICE_URL
+    service_url = service_url or DEFAULT_PROVER_URL
     scale = scale if scale is not None else DEFAULT_SCALE
     max_norm = max_norm if max_norm is not None else DEFAULT_MAX_NORM
     timeout = timeout if timeout is not None else DEFAULT_PROVE_TIMEOUT
@@ -266,6 +282,12 @@ def generate_gnark_proofs(
                 )
             if not shape:
                 raise RuntimeError(f"Refusing to prove empty tensor for layer '{name}'")
+            pinned = pinned_norm_vk()
+            if data.get("vk_sha256") != pinned or data.get("circuit_n") != norm_chunk_n():
+                raise RuntimeError(
+                    f"prover service answered layer '{name}' with key {data.get('vk_sha256')!r} "
+                    f"(n={data.get('circuit_n')}); the pinned key is {pinned!r} (n={norm_chunk_n()})"
+                )
 
             proof_payload = {
                 "layer": name,
@@ -274,6 +296,7 @@ def generate_gnark_proofs(
                 "bound_sq": payload["bound_sq"],
                 "proof_b64": proof_b64,
                 "hash_hex": hash_hex,
+                "vk_sha256": pinned,
             }
             return proof_payload, len(proof_b64)
         except RuntimeError:
@@ -292,7 +315,7 @@ def generate_gnark_proofs(
     # Build items to prove — large layers are split into chunks so the gnark
     # service never has to compile a circuit with an unbounded number of R1CS
     # constraints (e.g. fc1.weight with 48 000 params → ~16M constraints → OOM).
-    max_n = DEFAULT_MAX_LAYER_N
+    max_n = norm_chunk_n()
     items: List[Tuple[str, np.ndarray]] = []
     for name in protected_layers:
         if name not in state_dict:
@@ -402,7 +425,7 @@ def expected_proof_layout(
     Mirrors the chunking in generate_gnark_proofs, computed from the server's
     own model schema rather than client metadata.
     """
-    max_n = max_n or DEFAULT_MAX_LAYER_N
+    max_n = max_n or norm_chunk_n()
     layout: Dict[str, List[int]] = {}
     for name, shape in schema:
         n = int(np.prod(shape)) if len(shape) else 1
@@ -447,6 +470,7 @@ def check_proof_policy(
 
     scale = DEFAULT_SCALE if scale is None else scale
     bound = policy_bound_sq(scale, max_norm)
+    pinned = pinned_norm_vk()
     for p in proofs:
         name = p["layer"]
         try:
@@ -461,6 +485,8 @@ def check_proof_policy(
             return f"proof '{name}' uses scale {proof_scale} / bound {proof_bound}, not the server policy"
         if not isinstance(p.get("proof_b64"), str) or not p["proof_b64"]:
             return f"proof '{name}' has no proof bytes"
+        if p.get("vk_sha256") != pinned:
+            return f"proof '{name}' was made under verifying key {p.get('vk_sha256')!r}, not the pinned key"
         if require_hash:
             try:
                 h = int(str(p.get("hash_hex")), 16)
@@ -490,8 +516,9 @@ def verify_gnark_proofs(
         ok: True if every layer is fully covered and all proofs verify
         failures: layer or chunk names that failed
     """
-    service_url = service_url or DEFAULT_SERVICE_URL
+    service_url = service_url or DEFAULT_VERIFIER_URL
     timeout = timeout if timeout is not None else DEFAULT_VERIFY_TIMEOUT
+    pinned = pinned_norm_vk()
 
     proof_map = {
         item["layer"]: item
@@ -510,6 +537,7 @@ def verify_gnark_proofs(
                 key,
             )
             payload["proof_b64"] = str(proof["proof_b64"])
+            payload["vk_sha256"] = pinned  # the server's pin, never the client's claim
         except (KeyError, TypeError, ValueError):
             logger.warning("verify: malformed proof for %s", key)
             return False
@@ -576,8 +604,9 @@ def verify_gnark_proofs_light(
     Returns:
         (ok, failures) — ok is True iff every proof verified.
     """
-    service_url = service_url or DEFAULT_SERVICE_URL
+    service_url = service_url or DEFAULT_VERIFIER_URL
     timeout = timeout if timeout is not None else DEFAULT_VERIFY_LIGHT_TIMEOUT
+    pinned = pinned_norm_vk()
 
     failures: List[str] = []
 
@@ -601,6 +630,7 @@ def verify_gnark_proofs_light(
             "bound_sq": str(bound_sq),
             "hash_hex": str(proof["hash_hex"]),
             "proof_b64": proof_b64,
+            "vk_sha256": pinned,  # the server's pin, never the client's claim
         }
         data = _post_service(f"{service_url}/verify_light", payload, timeout)
         if data.get("verified") is not True:

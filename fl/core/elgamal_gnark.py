@@ -38,8 +38,26 @@ class ElGamalRejected(RuntimeError):
     """Service refused the request contents: malformed input or unsatisfied statement."""
 
 
+_VERIFIER_PATHS = frozenset({"/elgamal/verify", "/elgamal/aggregate"})
+
+
+def pinned_vk() -> str:
+    """SHA-256 of the pinned ElGamal-circuit verifying key."""
+    from fl.core.gnark_keys import ELGAMAL_CIRCUIT, pinned_vk_sha256
+
+    return pinned_vk_sha256(ELGAMAL_CIRCUIT)
+
+
+def _check_prover_key(data: dict, path: str) -> None:
+    if data.get("vk_sha256") != pinned_vk():
+        raise ElGamalServiceError(
+            f"{path}: prover uses verifying key {data.get('vk_sha256')!r}, pinned key is {pinned_vk()!r}"
+        )
+
+
 def _post(path: str, payload: dict, read_timeout: float) -> dict:
-    url = f"{zkp_gnark.DEFAULT_SERVICE_URL}{path}"
+    base = zkp_gnark.DEFAULT_VERIFIER_URL if path in _VERIFIER_PATHS else zkp_gnark.DEFAULT_PROVER_URL
+    url = f"{base}{path}"
     try:
         resp = requests.post(url, json=payload, timeout=(10.0, read_timeout))
     except requests.RequestException as exc:
@@ -65,9 +83,12 @@ class Policy:
 
     @classmethod
     def from_env(cls) -> "Policy":
+        from fl.core.gnark_keys import ELGAMAL_CIRCUIT, circuit_size
+
         return cls(
             scale=int(os.environ.get("FL_ELGAMAL_SCALE", "1000")),
-            chunk_size=int(os.environ.get("FL_ELGAMAL_CHUNK", "128")),
+            # Fixed by the pinned keys: one circuit size, shorter chunks padded.
+            chunk_size=circuit_size(ELGAMAL_CIRCUIT),
             max_norm=float(os.environ.get("FL_ZKP_MAX_NORM", "100.0")),
         )
 
@@ -151,6 +172,7 @@ def prove_chunk(pk_hex: str, q: np.ndarray, bound_sq: int, context: int) -> Tupl
     ct = base64.b64decode(data["ct_b64"])
     if len(ct) != len(q) * CIPHERTEXT_BYTES or not data.get("proof_b64"):
         raise ElGamalServiceError("/elgamal/prove returned a malformed response")
+    _check_prover_key(data, "/elgamal/prove")
     return ct, data["proof_b64"]
 
 
@@ -194,6 +216,7 @@ def prove_with(pk_hex: str, q: np.ndarray, rand: bytes, bound_sq: int, context: 
     ct = base64.b64decode(data["ct_b64"])
     if len(ct) != len(q) * CIPHERTEXT_BYTES or not data.get("proof_b64"):
         raise ElGamalServiceError("/elgamal/prove_with returned a malformed response")
+    _check_prover_key(data, "/elgamal/prove_with")
     return ct, data["proof_b64"]
 
 
@@ -212,6 +235,7 @@ def verify_chunk(pk_hex: str, ct: bytes, bound_sq: int, context: int, proof_b64:
                 "bound_sq": str(bound_sq),
                 "context": str(context),
                 "proof_b64": proof_b64,
+                "vk_sha256": pinned_vk(),  # the server's pin, never the client's claim
             },
             zkp_gnark.DEFAULT_VERIFY_TIMEOUT,
         )

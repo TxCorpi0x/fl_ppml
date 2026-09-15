@@ -93,7 +93,7 @@ class HeElGamalZKPSampledMode(CommitChallengeMixin, HeElGamalZKPMode):
                 eg.chunk_bound_sq(policy, chunk, n),
                 eg.context_value(context["round"], chunk),
             )
-            return {"chunk": j, "proof_b64": proof}
+            return {"chunk": j, "proof_b64": proof, "vk_sha256": eg.pinned_vk()}
 
         items = list(enumerate(self._chunks(indices, policy.chunk_size)))
         with timer(benchmark, "proof_generation"):
@@ -123,8 +123,11 @@ class HeElGamalZKPSampledMode(CommitChallengeMixin, HeElGamalZKPMode):
         chunks = self._chunks(indices, policy.chunk_size)
         try:
             proof_map = {int(p["chunk"]): str(p["proof_b64"]) for p in proofs or []}
-        except (KeyError, TypeError, ValueError):
+            off_key = any(p.get("vk_sha256") != eg.pinned_vk() for p in proofs or [])
+        except (KeyError, TypeError, ValueError, AttributeError):
             return "missing or malformed proofs", []
+        if off_key:
+            return "proofs were not made under the pinned verifying key", []
         if not proofs or len(proof_map) != len(proofs) or set(proof_map) != set(range(len(chunks))):
             return f"proof coverage mismatch: {len(proof_map)} distinct proofs for {len(chunks)} sampled chunks", []
 

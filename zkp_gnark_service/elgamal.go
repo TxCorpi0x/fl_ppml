@@ -123,31 +123,11 @@ func (c *elgamalCircuit) Define(api frontend.API) error {
 	return nil
 }
 
-var (
-	elgamalCacheMu sync.Mutex
-	elgamalCache   = map[int]*circuitCache{}
-)
-
-func getElgamalCircuit(n int) (*circuitCache, error) {
-	if n <= 0 || n > maxElgamalChunk {
-		return nil, fmt.Errorf("chunk size %d outside [1, %d]", n, maxElgamalChunk)
-	}
-	elgamalCacheMu.Lock()
-	defer elgamalCacheMu.Unlock()
-	if cached, ok := elgamalCache[n]; ok {
-		return cached, nil
-	}
-	cs, err := frontend.Compile(ecc.BN254.ScalarField(), r1cs.NewBuilder, newElgamalCircuit(n))
-	if err != nil {
-		return nil, err
-	}
-	pk, vk, err := groth16.Setup(cs)
-	if err != nil {
-		return nil, err
-	}
-	cached := &circuitCache{cs: cs, pk: pk, vk: vk}
-	elgamalCache[n] = cached
-	return cached, nil
+// paddingCiphertext fills circuit slots beyond the real values: the public
+// encryption of 0 with randomness 0, (identity, offset·G). Prover and verifier
+// both rebuild it, so it is never transmitted and carries no client data.
+func paddingCiphertext(pk edbn254.PointAffine) elgamalCiphertext {
+	return encryptWith(pk, 0, big.NewInt(0))
 }
 
 // ── Native curve helpers ─────────────────────────────────────────────────────
@@ -334,12 +314,18 @@ func elgamalProveWith(pk edbn254.PointAffine, qs []int64, rands []*big.Int, boun
 	if len(rands) != n {
 		return nil, nil, fmt.Errorf("%d values but %d randomness scalars", n, len(rands))
 	}
-	cached, err := getElgamalCircuit(n)
+	k, err := store.keys(elgamalCircuitID)
 	if err != nil {
 		return nil, nil, err
 	}
+	if k.pk == nil {
+		return nil, nil, fmt.Errorf("%s role cannot prove", store.role)
+	}
+	if n == 0 || n > k.n {
+		return nil, nil, fmt.Errorf("%d values do not fit the fixed circuit size %d", n, k.n)
+	}
 	params := edParams()
-	assignment := newElgamalCircuit(n)
+	assignment := newElgamalCircuit(k.n)
 	assignment.PKX, assignment.PKY = coord(pk.X), coord(pk.Y)
 	assignment.Bound, assignment.Context = bound, context
 
@@ -358,12 +344,18 @@ func elgamalProveWith(pk edbn254.PointAffine, qs []int64, rands []*big.Int, boun
 		assignment.C1X[i], assignment.C1Y[i] = coord(cts[i].C1.X), coord(cts[i].C1.Y)
 		assignment.C2X[i], assignment.C2Y[i] = coord(cts[i].C2.X), coord(cts[i].C2.Y)
 	}
+	pad := paddingCiphertext(pk)
+	for i := n; i < k.n; i++ {
+		assignment.Values[i], assignment.Rand[i] = new(big.Int).Set(elgamalOffset), big.NewInt(0)
+		assignment.C1X[i], assignment.C1Y[i] = coord(pad.C1.X), coord(pad.C1.Y)
+		assignment.C2X[i], assignment.C2Y[i] = coord(pad.C2.X), coord(pad.C2.Y)
+	}
 
 	w, err := frontend.NewWitness(assignment, ecc.BN254.ScalarField())
 	if err != nil {
 		return nil, nil, err
 	}
-	proof, err := groth16.Prove(cached.cs, cached.pk, w)
+	proof, err := groth16.Prove(k.cs, k.pk, w)
 	if err != nil {
 		return nil, nil, fmt.Errorf("statement not satisfied: %w", err)
 	}
@@ -377,18 +369,29 @@ func elgamalProveWith(pk edbn254.PointAffine, qs []int64, rands []*big.Int, boun
 // elgamalVerify checks a chunk proof against ciphertexts the verifier holds.
 func elgamalVerify(pk edbn254.PointAffine, cts []elgamalCiphertext, bound, context *big.Int, proofBytes []byte) (bool, error) {
 	n := len(cts)
-	cached, err := getElgamalCircuit(n)
+	k, err := store.keys(elgamalCircuitID)
 	if err != nil {
 		return false, err
+	}
+	if k.vk == nil {
+		return false, fmt.Errorf("%s role cannot verify", store.role)
+	}
+	if n == 0 || n > k.n {
+		return false, fmt.Errorf("%d ciphertexts do not fit the fixed circuit size %d", n, k.n)
 	}
 	proof := groth16.NewProof(ecc.BN254)
 	if _, err := proof.ReadFrom(bytes.NewReader(proofBytes)); err != nil {
 		return false, fmt.Errorf("decode proof: %w", err)
 	}
-	assignment := newElgamalCircuit(n)
+	assignment := newElgamalCircuit(k.n)
 	assignment.PKX, assignment.PKY = coord(pk.X), coord(pk.Y)
 	assignment.Bound, assignment.Context = bound, context
-	for i, ct := range cts {
+	pad := paddingCiphertext(pk)
+	for i := 0; i < k.n; i++ {
+		ct := pad
+		if i < n {
+			ct = cts[i]
+		}
 		assignment.C1X[i], assignment.C1Y[i] = coord(ct.C1.X), coord(ct.C1.Y)
 		assignment.C2X[i], assignment.C2Y[i] = coord(ct.C2.X), coord(ct.C2.Y)
 		assignment.Values[i], assignment.Rand[i] = 0, 0
@@ -401,7 +404,7 @@ func elgamalVerify(pk edbn254.PointAffine, cts []elgamalCiphertext, bound, conte
 	if err != nil {
 		return false, err
 	}
-	return groth16.Verify(proof, cached.vk, public) == nil, nil
+	return groth16.Verify(proof, k.vk, public) == nil, nil
 }
 
 // elgamalAggregate returns Σ weight_i · ct_i coordinate-wise.
@@ -622,6 +625,7 @@ func elgamalProveWithHandler(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{
 		"ct_b64":    base64.StdEncoding.EncodeToString(encodeCiphertexts(cts)),
 		"proof_b64": base64.StdEncoding.EncodeToString(proof),
+		"vk_sha256": elgamalVKHash(),
 	})
 }
 
@@ -631,6 +635,14 @@ type elgamalVerifyRequest struct {
 	BoundSq  string `json:"bound_sq"`
 	Context  string `json:"context"`
 	ProofB64 string `json:"proof_b64"`
+	VKSHA256 string `json:"vk_sha256"`
+}
+
+func elgamalVKHash() string {
+	if k, err := store.keys(elgamalCircuitID); err == nil {
+		return k.vkHash
+	}
+	return ""
 }
 
 type elgamalAggregateRequest struct {
@@ -715,6 +727,7 @@ func elgamalProveHandler(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{
 		"ct_b64":    base64.StdEncoding.EncodeToString(encodeCiphertexts(cts)),
 		"proof_b64": base64.StdEncoding.EncodeToString(proof),
+		"vk_sha256": elgamalVKHash(),
 	})
 }
 
@@ -743,6 +756,14 @@ func elgamalVerifyHandler(w http.ResponseWriter, r *http.Request) {
 	proof, err := base64.StdEncoding.DecodeString(req.ProofB64)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, fmt.Errorf("proof_b64: %w", err))
+		return
+	}
+	k, err := store.keys(elgamalCircuitID)
+	if err == nil {
+		err = k.checkVK(req.VKSHA256)
+	}
+	if err != nil {
+		writeError(w, keyStatus(err), err)
 		return
 	}
 	ok, err := elgamalVerify(pk, cts, bound, ctx, proof)
@@ -849,14 +870,19 @@ func elgamalInfoHandler(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-func registerElgamalRoutes() {
-	http.HandleFunc("/elgamal/prove", elgamalProveHandler)
-	http.HandleFunc("/elgamal/encrypt", elgamalEncryptHandler)
-	http.HandleFunc("/elgamal/prove_with", elgamalProveWithHandler)
-	http.HandleFunc("/elgamal/verify", elgamalVerifyHandler)
-	http.HandleFunc("/elgamal/aggregate", elgamalAggregateHandler)
-	http.HandleFunc("/elgamal/decrypt", elgamalDecryptHandler)
-	http.HandleFunc("/elgamal/info", elgamalInfoHandler)
+// Client-side operations: encryption, proving, and decrypting the aggregate.
+func registerElgamalProverRoutes(mux *http.ServeMux) {
+	mux.HandleFunc("/elgamal/prove", elgamalProveHandler)
+	mux.HandleFunc("/elgamal/encrypt", elgamalEncryptHandler)
+	mux.HandleFunc("/elgamal/prove_with", elgamalProveWithHandler)
+	mux.HandleFunc("/elgamal/decrypt", elgamalDecryptHandler)
+	mux.HandleFunc("/elgamal/info", elgamalInfoHandler)
+}
+
+// Server-side operations: verification and homomorphic aggregation.
+func registerElgamalVerifierRoutes(mux *http.ServeMux) {
+	mux.HandleFunc("/elgamal/verify", elgamalVerifyHandler)
+	mux.HandleFunc("/elgamal/aggregate", elgamalAggregateHandler)
 }
 
 // runElgamalKeygen implements `gnark_service elgamal-keygen <secret.json> <public.json>`.

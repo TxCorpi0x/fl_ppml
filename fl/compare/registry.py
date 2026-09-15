@@ -91,7 +91,7 @@ class ModeConfig:
     Per-privacy-mode configuration.
 
     ``internal_mode`` and ``he_backend`` map to the legacy (mode, he_backend)
-    tuple that simulation.py / main_server.py expect.
+    tuple used for reporting and ZKP run validation.
     """
 
     # Legacy internal fields consumed by experiment.py
@@ -192,9 +192,8 @@ MODES: Dict[str, ModeConfig] = {
         display_name="DP",
     ),
     # ── Hybrid FHE + ZKP modes ─────────────────────────────────────────────
-    # internal_mode="he_zkp" → _build_mode_flags emits both --he and --zkp.
-    # _resolve_mode in simulation/main_server/main_client detects both flags
-    # and returns the composite privacy-registry key.
+    # internal_mode="he_zkp" groups the composites for reporting and ZKP run
+    # validation; runs select the privacy mode by its registry key.
     "he_tenseal_zkp": ModeConfig(
         internal_mode="he_zkp",
         he_backend="tenseal",
@@ -232,8 +231,7 @@ MODES: Dict[str, ModeConfig] = {
         display_name="HE-ElGamal + sampled ZKP (commit-challenge)",
     ),
     # ── Triple: HE + ZKP + DP  ─────────────────────────────────────────────
-    # internal_mode="he_zkp_dp" → _build_mode_flags emits --he --zkp --dp.
-    # _resolve_mode detects all three flags and returns the composite key.
+    # internal_mode="he_zkp_dp": HE + ZKP + DP composites, selected by registry key.
     "he_tenseal_zkp_dp": ModeConfig(
         internal_mode="he_zkp_dp",
         he_backend="tenseal",

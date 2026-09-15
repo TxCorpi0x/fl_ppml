@@ -136,7 +136,7 @@ def run_comparison(
     output_dir:
         Root output directory; each mode creates a sub-directory here.
     use_simulation:
-        ``False`` (default) → real gRPC server + clients; ``True`` → Flower simulation subprocess.
+        ``False`` (default) → a SuperLink with SuperNode processes; ``True`` → Flower's Simulation Runtime.
     validate_zkp:
         ``True`` (default) → every ZKP-family mode must show, in its chain
         ledger, proofs from every aggregated client in every round; any
@@ -170,8 +170,8 @@ def run_comparison(
         )
     )
     _validate_modes(cfg.modes)
-    # main_server.py requires min_fit_clients=2 and min_avail_clients=2, which
-    # the harness does not forward; fewer clients would wait until timeout.
+    # FedPrivate samples at least min-fit-clients=2 nodes, which the harness does
+    # not override; fewer clients would wait until the node timeout.
     if cfg.num_clients < 2:
         raise ValueError(f"num_clients must be at least 2, got {cfg.num_clients}")
     if cfg.num_rounds < 1:

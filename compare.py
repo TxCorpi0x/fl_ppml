@@ -114,7 +114,7 @@ def _build_parser() -> argparse.ArgumentParser:
         "--simulation",
         action="store_true",
         help=(
-            "Use Flower in-process simulation instead of real gRPC server + clients. "
+            "Use Flower's Simulation Runtime instead of a SuperLink with SuperNode processes. "
             "HE modes then transport plaintext (their results are marked [SIM])."
         ),
     )

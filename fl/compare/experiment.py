@@ -18,7 +18,7 @@ import time
 import urllib.error
 import urllib.request
 from datetime import datetime
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 from fl.compare.benchmark import (
     aggregate_client_benchmarks,
@@ -132,35 +132,6 @@ def _kill_port(port: int) -> None:
             time.sleep(1)
     except Exception:
         pass
-
-
-def _wait_for_server(server_proc, server_start_ts: float, server_timeout: float, grace: float) -> Optional[str]:
-    """Wait for the server after all clients exited; terminate it if it outlives the grace period or the timeout.
-
-    Returns None if the server exited on its own, otherwise why it was stopped.
-    A terminated server has a non-zero return code, so the run is marked failed.
-    """
-    clients_done = time.monotonic()
-    reason = None
-    while server_proc.poll() is None:
-        now = time.monotonic()
-        if server_timeout > 0 and now - server_start_ts > server_timeout:
-            reason = f"server timeout after {now - server_start_ts:.0f}s"
-        elif now - clients_done > grace:
-            reason = f"server still running {now - clients_done:.0f}s after every client exited"
-        if reason:
-            try:
-                if hasattr(os, "killpg"):
-                    os.killpg(os.getpgid(server_proc.pid), signal.SIGTERM)
-                else:
-                    server_proc.terminate()
-                server_proc.wait(timeout=10)
-            except (subprocess.TimeoutExpired, ProcessLookupError):
-                server_proc.kill()
-                server_proc.wait(timeout=10)
-            return reason
-        time.sleep(0.5)
-    return None
 
 
 def _needs_gnark(mode_cfg: ModeConfig) -> bool:
@@ -302,11 +273,8 @@ def _ensure_gnark_role(role: str, binary: str, log_dir: str) -> bool:
 
 
 def _grpc_env(base: Dict[str, str]) -> Dict[str, str]:
-    """Add gRPC keepalive / message-size env vars to a copy of ``base``."""
+    """Add gRPC keepalive env vars to a copy of ``base``."""
     env = base.copy()
-    env["FL_GRPC_MAX_MESSAGE_LENGTH"] = os.environ.get(
-        "FL_GRPC_MAX_MESSAGE_LENGTH", str(2_147_483_647)
-    )
     env["GRPC_ARG_KEEPALIVE_TIME_MS"] = "300000"
     env["GRPC_ARG_KEEPALIVE_TIMEOUT_MS"] = "120000"
     env["GRPC_ARG_KEEPALIVE_PERMIT_WITHOUT_CALLS"] = "1"
@@ -318,430 +286,139 @@ def _grpc_env(base: Dict[str, str]) -> Dict[str, str]:
     return env
 
 
-def _build_mode_flags(mode_cfg: ModeConfig) -> list:
-    """Return CLI flag list for the given mode."""
-    flags: list = []
-    m = mode_cfg.internal_mode
-    b = mode_cfg.he_backend
-
-    if m == "he":
-        flags.append("--he")
-        if b:
-            flags.extend(["--he_backend", b])
-        if b != "concrete_tfhe":
-            flags.extend(["--path_keys", "keys/he_tenseal/secret_context.bin"])
-            flags.extend(["--path_public_key", "keys/he_tenseal/public_context.bin"])
-    elif m == "he_zkp":
-        # Hybrid: HE encryption + ZKP integrity proofs
-        flags.append("--he")
-        if b:
-            flags.extend(["--he_backend", b])
-        if b != "concrete_tfhe":
-            flags.extend(["--path_keys", "keys/he_tenseal/secret_context.bin"])
-            flags.extend(["--path_public_key", "keys/he_tenseal/public_context.bin"])
-        flags.append("--zkp")
-        zkp_backend = os.environ.get("FL_ZKP_BACKEND", "gnark").lower()
-        flags.extend(["--zkp_backend", zkp_backend])
-        if zkp_backend != "gnark":
-            flags.extend(["--zkp_params", "keys/zkp/zkp_params.json"])
-    elif m == "he_zkp_dp":
-        # Triple: HE encryption + ZKP integrity proofs + DP-SGD noise
-        flags.append("--he")
-        if b:
-            flags.extend(["--he_backend", b])
-        if b != "concrete_tfhe":
-            flags.extend(["--path_keys", "keys/he_tenseal/secret_context.bin"])
-            flags.extend(["--path_public_key", "keys/he_tenseal/public_context.bin"])
-        flags.append("--zkp")
-        zkp_backend = os.environ.get("FL_ZKP_BACKEND", "gnark").lower()
-        flags.extend(["--zkp_backend", zkp_backend])
-        if zkp_backend != "gnark":
-            flags.extend(["--zkp_params", "keys/zkp/zkp_params.json"])
-        flags.append("--dp")
-        flags.extend(["--dp_params", "keys/dp/dp_params.json"])
-    elif m == "zkp":
-        flags.append("--zkp")
-        zkp_backend = os.environ.get("FL_ZKP_BACKEND", "gnark").lower()
-        flags.extend(["--zkp_backend", zkp_backend])
-        if zkp_backend != "gnark":
-            flags.extend(["--zkp_params", "keys/zkp/zkp_params.json"])
-    elif m == "dp":
-        flags.append("--dp")
-        flags.extend(["--dp_params", "keys/dp/dp_params.json"])
-
-    return flags
-
-
-def _load_benchmark(result_dir: str, display_mode: str) -> Optional[Dict]:
-    """Load the benchmark JSON written by simulation.py / main_server.py."""
-    # fl/runner.run_mode() saves as benchmark_{mode_name}.json
-    candidates = [
-        os.path.join(result_dir, f"benchmark_{display_mode}.json"),
-        os.path.join(result_dir, "benchmark.json"),
-    ]
-    for path in candidates:
-        if os.path.exists(path):
-            with open(path) as f:
-                data = json.load(f)
-            return data or {}
-    return None
+def _load_json(path: str) -> Optional[Dict]:
+    if not os.path.exists(path):
+        return None
+    with open(path) as f:
+        return json.load(f)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Simulation mode (in-process Flower)
+# Flower runs (SuperLink + SuperNodes, or the Simulation Runtime)
 # ─────────────────────────────────────────────────────────────────────────────
 
-
-def run_simulation(
-    mode_cfg: ModeConfig,
-    display_mode: str,
-    base_args: Dict[str, Any],
-    result_dir: str,
-) -> Dict:
-    """Run a single experiment via simulation.py subprocess."""
-    cmd = [sys.executable, "simulation.py", "simulation"]
-
-    for key, value in base_args.items():
-        if value is not None and value != "":
-            cmd.extend([f"--{key}", str(value)])
-
-    cmd.extend(_build_mode_flags(mode_cfg))
-    # Select the registered mode by key: flag combinations alone can't name
-    # modes such as zkp_sampled.
-    cmd.extend(["--privacy_mode", display_mode])
-    cmd += [
-        "--benchmark",
-        "--save_results",
-        f"{result_dir}/",
-        "--model_save",
-        f"{result_dir}/model.pt",
-    ]
-
-    print(f"Command: {' '.join(cmd)}\n")
-
-    env = os.environ.copy()
-    env["FL_SIMULATION"] = "1"
-
-    timeout_s = mode_cfg.timeout_s
-    start = datetime.now()
-
-    stdout_log = open(f"{result_dir}/stdout.log", "w")
-    stderr_log = open(f"{result_dir}/stderr.log", "w")
-    # Write the full command line into the log so callers can grep for flags
-    # like --seed without needing to capture the parent process stdout.
-    stdout_log.write(f"# Command: {' '.join(cmd)}\n")
-    stdout_log.flush()
-    try:
-        proc = _register_proc(
-            subprocess.Popen(
-                cmd,
-                stdout=stdout_log,
-                stderr=stderr_log,
-                env=env,
-                preexec_fn=os.setsid if hasattr(os, "setsid") else None,
-            )
-        )
-        try:
-            proc.wait(timeout=timeout_s)
-        except subprocess.TimeoutExpired:
-            if hasattr(os, "killpg"):
-                os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
-            else:
-                proc.terminate()
-            proc.wait(timeout=10)
-        returncode = proc.returncode
-    finally:
-        _unregister_proc(proc)
-        stdout_log.close()
-        stderr_log.close()
-
-    duration = (datetime.now() - start).total_seconds()
-
-    benchmark = _load_benchmark(result_dir, display_mode)
-    if benchmark is None and returncode == 0:
-        print(
-            f"[WARN]  Warning: {display_mode} benchmark file not found after successful run"
-        )
-
-    success = returncode == 0 and benchmark is not None
-    print(
-        f"{display_mode.upper()} {'[OK] SUCCESS' if success else '[FAIL] FAILED'} ({duration:.1f}s)"
-    )
-    return {
-        "mode": display_mode,
-        "duration": duration,
-        "exit_code": returncode,
-        "result_dir": result_dir,
-        "benchmark": benchmark,
-        "success": success,
-    }
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Distributed mode (real gRPC server + client processes)
-# ─────────────────────────────────────────────────────────────────────────────
-
-_PORT_MAP = {
-    "baseline": 8081,
-    "he": 8082,
-    "zkp": 8083,
-    "dp": 8084,
-    "he_zkp": 8085,
-    "he_zkp_dp": 8086,
+# Harness argument → Flower run config key (pyproject.toml [tool.flwr.app.config]).
+_RUN_CONFIG_KEYS = {
+    "dataset": "dataset",
+    "data_path": "data-path",
+    "max_epochs": "local-epochs",
+    "batch_size": "batch-size",
+    "lr": "learning-rate",
+    "device": "device",
+    "number_clients": "num-clients",
+    "rounds": "num-rounds",
+    "dirichlet_alpha": "dirichlet-alpha",
+    "dp_epsilon": "dp-epsilon",
+    "seed": "seed",
+    "chain_backend": "chain-backend",
+    "chain_ledger_path": "chain-ledger-path",
 }
 
 
-def run_distributed(
-    mode_cfg: ModeConfig,
-    display_mode: str,
-    base_args: Dict[str, Any],
-    result_dir: str,
-) -> Dict:
-    """Run a single experiment with real gRPC server + N client processes."""
-    num_clients = base_args.get("number_clients", 3)
-    m = mode_cfg.internal_mode
-
-    # ── common args (shared by server and clients) ─────────────────────────
-    common_args: list = []
-    for key, flag in {
-        "dataset": "--dataset",
-        "data_path": "--data_path",
-        "max_epochs": "--max_epochs",
-        "batch_size": "--batch_size",
-        "device": "--device",
-        "number_clients": "--number_clients",  # clients need this to partition data correctly
-        "rounds": "--rounds",  # keep client benchmark metadata aligned with server run
-        "dirichlet_alpha": "--dirichlet_alpha",  # non-IID partitioning
-        "dp_epsilon": "--dp_epsilon",  # DP privacy budget override
-        "seed": "--seed",  # reproducibility seed
-    }.items():
-        v = base_args.get(key)
-        if v is not None and v != "":
-            common_args.extend([flag, str(v)])
-
-    server_extra: list = []
-    for key, flag in {
-        "rounds": "--rounds",
-    }.items():
-        v = base_args.get(key)
-        if v is not None and v != "":
-            server_extra.extend([flag, str(v)])
-    # Start round 1 only once every client is connected (FedPrivate.configure_fit
-    # waits for min_avail_clients before sizing its sample). Otherwise a late client
-    # misses round 1: for commit–challenge modes it then has nothing to answer
-    # the challenge with, and every mode runs its first round with fewer clients.
-    server_extra.extend(["--min_avail_clients", str(num_clients)])
-
-    # Chain ledger args are server-only (clients don't write to the ledger)
-    chain_backend = base_args.get("chain_backend", "")
-    chain_ledger_path = base_args.get("chain_ledger_path", "")
-    if chain_backend:
-        server_extra.extend(["--chain_backend", chain_backend])
-    if chain_ledger_path and chain_backend != "none":
-        server_extra.extend(["--chain_ledger_path", chain_ledger_path])
-
-    # Select the registered mode by key: flag combinations alone can't name
-    # modes such as zkp_sampled.
-    mode_flags = _build_mode_flags(mode_cfg) + ["--privacy_mode", display_mode]
-
-    # ── server ────────────────────────────────────────────────────────────
-    server_cmd = (
-        [sys.executable, "main_server.py", "server"]
-        + common_args
-        + server_extra
-        + mode_flags
-        + [
-            "--benchmark",
-            "--save_results",
-            result_dir,
-            "--model_save",
-            f"{result_dir}/server_model.pt",
-        ]
-    )
-    print(f"Starting server: {' '.join(server_cmd)}\n")
-
-    port = _PORT_MAP.get(m, 8081)
-    server_addr = f"127.0.0.1:{port}"
-    env_server = _grpc_env(os.environ.copy())
-    env_server["FL_SERVER_ADDRESS"] = server_addr
-
-    server_log_path = f"{result_dir}/server.log"
-    with open(server_log_path, "w") as server_log:
-        server_start_ts = time.monotonic()
-        server_proc = _register_proc(
-            subprocess.Popen(
-                server_cmd,
-                stdout=server_log,
-                stderr=subprocess.STDOUT,
-                preexec_fn=os.setsid if hasattr(os, "setsid") else None,
-                env=env_server,
-            )
-        )
-
-    time.sleep(5)
-
-    if server_proc.poll() is not None:
-        print(f"[ERROR] Server failed to start! Check {server_log_path}")
-        return {
+def run_config_for(display_mode: str, base_args: Dict[str, Any], result_dir: str, simulation: bool) -> Dict[str, Any]:
+    """The Flower run config for one mode of a comparison run."""
+    given = {k: v for k, v in base_args.items() if v is not None and v != ""}
+    unknown = sorted(set(given) - set(_RUN_CONFIG_KEYS))
+    if unknown:
+        raise ValueError(f"arguments without a run config key: {unknown}")
+    run_config = {_RUN_CONFIG_KEYS[k]: v for k, v in given.items()}
+    num_clients = int(run_config.get("num-clients", 3))
+    result_dir = os.path.abspath(result_dir)
+    run_config.update(
+        {
+            # Select the registered mode by key: flag combinations alone can't
+            # name modes such as zkp_sampled.
             "mode": display_mode,
-            "success": False,
-            "exit_code": server_proc.returncode,
-            "result_dir": result_dir,
-            "benchmark": None,
+            "num-clients": num_clients,
+            # Start round 1 only once every client is connected (FedPrivate waits
+            # for min-avail-clients before sizing its sample). Otherwise a late
+            # client misses round 1: for commit–challenge modes it then has
+            # nothing to answer the challenge with, and every mode runs its first
+            # round with fewer clients.
+            "min-avail-clients": num_clients,
+            "results-dir": result_dir,
+            "model-save": os.path.join(result_dir, "server_model.pt"),
+            "benchmark": True,
+            "sim-mode": simulation,
         }
+    )
+    return run_config
 
-    print(f"[OK] Server started (PID: {server_proc.pid})")
 
-    # ── clients ───────────────────────────────────────────────────────────
-    client_benchmark_args = [
-        "--benchmark",
-        "--save_results",
-        result_dir,
-        "--model_save",
-        f"{result_dir}/model.pt",
-    ]
-    client_procs = []
+def round_failures(benchmark: Optional[Dict]) -> List[str]:
+    """Rounds that did not complete cleanly, for every mode.
 
-    for cid in range(num_clients):
-        client_cmd = (
-            [sys.executable, "main_client.py", "client"]
-            + common_args
-            + mode_flags
-            + client_benchmark_args
-            + ["--id_client", str(cid)]
-        )
-        print(f"Starting client {cid}...")
-        log_path = f"{result_dir}/client_{cid}.log"
-        log_file = open(log_path, "w")
-        env_client = _grpc_env(os.environ.copy())
-        env_client["FL_SERVER_ADDRESS"] = server_addr
-        proc = _register_proc(
-            subprocess.Popen(
-                client_cmd,
-                stdout=log_file,
-                stderr=subprocess.STDOUT,
-                preexec_fn=os.setsid if hasattr(os, "setsid") else None,
-                env=env_client,
+    A ClientApp that crashes (e.g. a native abort in an HE library) leaves its
+    SuperNode running, so the run itself still completes; the ServerApp only
+    records the missing reply. Such a run is not a successful benchmark.
+    """
+    problems = []
+    for outcome in (benchmark or {}).get("round_outcomes") or []:
+        if outcome.get("outcome") not in ("aggregated", "committed") or outcome.get("flower_failures"):
+            problems.append(
+                f"round {outcome.get('round')}: outcome={outcome.get('outcome')} "
+                f"flower_failures={outcome.get('flower_failures', 0)}"
             )
-        )
-        client_procs.append((proc, log_file, cid))
+    return problems
 
-    print(f"[OK] All {num_clients} clients started, waiting for completion...")
 
+def _run_timeout(mode_cfg: ModeConfig, simulation: bool) -> int:
+    env_timeout = os.environ.get("FL_SERVER_TIMEOUT", "").strip()
+    if env_timeout:
+        return int(env_timeout)
+    if simulation:
+        return mode_cfg.timeout_s
     env_client_timeout = os.environ.get("FL_CLIENT_TIMEOUT", "").strip()
     if env_client_timeout:
         client_timeout = int(env_client_timeout)
     else:
-        # Heavy crypto modes can run for multiple hours on CIFAR; default to 6h
-        # when no explicit timeout is provided.
-        mode_l = str(m).lower()
-        client_timeout = (
-            21600
-            if ("zkp" in mode_l or "he_" in mode_l or mode_l.startswith("he"))
-            else 7200
-        )
+        # Heavy crypto modes can run for multiple hours on CIFAR; default to 6h.
+        mode_l = str(mode_cfg.internal_mode).lower()
+        client_timeout = 21600 if ("zkp" in mode_l or mode_l.startswith("he")) else 7200
+    # 30 min headroom for final evaluation, checkpointing and shutdown.
+    return client_timeout + 1800
 
-    env_server_timeout = os.environ.get("FL_SERVER_TIMEOUT", "").strip()
-    if env_server_timeout:
-        server_timeout = int(env_server_timeout)
-    else:
-        # Server should have at least as much wall-clock budget as clients.
-        # Add 30min headroom for final eval/checkpoint/merge and shutdown.
-        server_timeout = max(client_timeout, client_timeout + 1800)
 
-    # ── wait for clients ──────────────────────────────────────────────────
-    # IMPORTANT: do not wait sequentially with the same timeout per proc, or
-    # client_0 is always penalized in long runs (it is waited on first and can
-    # hit timeout while other clients get extra wall-clock time).
-    client_failures = 0
-    pending = {
-        proc: {
-            "cid": cid,
-            "log_file": log_file,
-            "start_ts": time.monotonic(),
-        }
-        for proc, log_file, cid in client_procs
-    }
+def _run_federation(
+    mode_cfg: ModeConfig,
+    display_mode: str,
+    base_args: Dict[str, Any],
+    result_dir: str,
+    simulation: bool,
+) -> Dict:
+    """Run one mode on a local SuperLink, with SuperNode processes unless simulating."""
+    from fl.launch import Federation
 
-    while pending:
-        progressed = False
-        for proc in list(pending.keys()):
-            meta = pending[proc]
-            cid = meta["cid"]
-            log_file = meta["log_file"]
-
-            ec = proc.poll()
-            if ec is not None:
-                progressed = True
-                if ec != 0:
-                    print(f"[WARN]  Client {cid} failed (exit {ec})")
-                    client_failures += 1
-                else:
-                    print(f"[OK] Client {cid} completed")
-                _unregister_proc(proc)
-                try:
-                    log_file.close()
-                except Exception:
-                    pass
-                pending.pop(proc, None)
-                continue
-
-            if client_timeout > 0:
-                elapsed = time.monotonic() - float(meta["start_ts"])
-                if elapsed > client_timeout:
-                    progressed = True
-                    print(f"⏱️  Client {cid} timed out after {elapsed:.0f}s!")
-                    try:
-                        if hasattr(os, "killpg"):
-                            os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
-                        else:
-                            proc.terminate()
-                        proc.wait(timeout=10)
-                    except Exception:
-                        try:
-                            proc.kill()
-                        except Exception:
-                            pass
-                    client_failures += 1
-                    _unregister_proc(proc)
-                    try:
-                        log_file.close()
-                    except Exception:
-                        pass
-                    pending.pop(proc, None)
-
-        if not progressed:
-            time.sleep(1.0)
-
-    # ── wait for server ───────────────────────────────────────────────────
-    # Every client has exited by now. A server that doesn't follow within the
-    # grace period is stuck: it would otherwise wait in Flower's client
-    # availability loop for clients that have all exited.
-    grace = 60 if client_failures else int(os.environ.get("FL_SERVER_GRACE", "600"))
-    print("\nWaiting for server to complete...")
+    run_config = run_config_for(display_mode, base_args, result_dir, simulation)
+    num_clients = run_config["num-clients"]
+    # A run still active this long after every SuperNode exited is stuck: the
+    # ServerApp would otherwise wait for replies that can no longer arrive.
+    grace = int(os.environ.get("FL_SERVER_GRACE", "600"))
+    start = datetime.now()
+    status, details, client_failures = "not_started", "", 0
     try:
-        stop_reason = _wait_for_server(server_proc, server_start_ts, server_timeout, grace)
-    finally:
-        _unregister_proc(server_proc)
-    if stop_reason:
-        print(f"⏱️  {stop_reason}; server terminated")
-    else:
-        print("[OK] Server completed")
+        with Federation(result_dir, num_clients, simulation=simulation, env=_grpc_env({})) as federation:
+            run_id = federation.submit(run_config)
+            where = "Simulation Runtime" if simulation else f"{num_clients} SuperNodes"
+            print(f"[OK] Run {run_id} submitted ({where}); logs in {result_dir}")
+            status, details = federation.wait(run_id, timeout=_run_timeout(mode_cfg, simulation), grace=grace)
+            client_failures = federation.client_failures()
+            federation.save_app_logs(run_id)
+    except (RuntimeError, OSError, ValueError, subprocess.SubprocessError) as exc:
+        details = str(exc)
+        print(f"[ERROR] {display_mode}: {exc}")
+    duration = (datetime.now() - start).total_seconds()
+    if details:
+        print(f"  status={status}: {details}")
 
     # ── merge benchmarks ──────────────────────────────────────────────────
-    server_bm = None
     bm_path = os.path.join(result_dir, "benchmark.json")
-    if os.path.exists(bm_path):
-        with open(bm_path) as f:
-            server_bm = json.load(f)
-
-    client_bms = []
-    for i in range(num_clients):
-        p = os.path.join(result_dir, f"client_{i}_benchmark.json")
-        if os.path.exists(p):
-            with open(p) as f:
-                client_bms.append(json.load(f))
-
+    server_bm = _load_json(bm_path)
+    client_bms = [
+        bm
+        for i in range(num_clients)
+        if (bm := _load_json(os.path.join(result_dir, f"client_{i}_benchmark.json"))) is not None
+    ]
     client_agg = aggregate_client_benchmarks(client_bms)
     if client_bms:
         print(f"[OK] Aggregated {len(client_bms)} client benchmarks")
@@ -757,22 +434,46 @@ def run_distributed(
             json.dump(benchmark, f, indent=2)
         print(f"[OK] Merged benchmark written → {bm_path}")
 
-    success = (
-        server_proc.returncode == 0 and client_failures == 0 and benchmark is not None
-    )
+    completed = status == "finished:completed"
+    problems = round_failures(benchmark)
+    for problem in problems:
+        print(f"  [FAIL] {problem}")
+    success = completed and client_failures == 0 and benchmark is not None and not problems
 
-    print(f"{display_mode.upper()} {'[OK] SUCCESS' if success else '[FAIL] FAILED'}")
+    print(f"{display_mode.upper()} {'[OK] SUCCESS' if success else '[FAIL] FAILED'} ({duration:.1f}s)")
     if client_failures:
         print(f"  ({client_failures}/{num_clients} clients failed)")
 
     return {
         "mode": display_mode,
         "success": success,
-        "exit_code": server_proc.returncode,
+        "status": status,
+        "exit_code": 0 if completed else 1,
+        "duration": duration,
         "result_dir": result_dir,
         "benchmark": benchmark,
         "client_failures": client_failures,
     }
+
+
+def run_simulation(
+    mode_cfg: ModeConfig,
+    display_mode: str,
+    base_args: Dict[str, Any],
+    result_dir: str,
+) -> Dict:
+    """Run one mode on Flower's Simulation Runtime (HE modes transport plaintext)."""
+    return _run_federation(mode_cfg, display_mode, base_args, result_dir, simulation=True)
+
+
+def run_distributed(
+    mode_cfg: ModeConfig,
+    display_mode: str,
+    base_args: Dict[str, Any],
+    result_dir: str,
+) -> Dict:
+    """Run one mode with a SuperLink and one SuperNode process per client."""
+    return _run_federation(mode_cfg, display_mode, base_args, result_dir, simulation=False)
 
 
 # ─────────────────────────────────────────────────────────────────────────────

@@ -35,11 +35,10 @@ from typing import Dict, List, Optional
 import numpy as np
 
 from fl.config import FLConfig
-from fl.core.benchmark import BenchmarkMetrics, init_benchmark
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Single-mode runner (in-process Flower simulation)
+# Single-mode runner (Flower Simulation Runtime)
 # ─────────────────────────────────────────────────────────────────────────────
 
 
@@ -49,26 +48,20 @@ def run_mode(
     output_dir: str = "./results/",
 ) -> Dict:
     """
-    Run a single FL experiment in-process using Flower simulation.
+    Run a single FL experiment on Flower's Simulation Runtime.
 
     Args:
         mode_name:  Privacy mode name (e.g. "baseline", "he_tenseal").
         config:     Experiment configuration.
-        output_dir: Directory to save results and benchmark JSON.
+        output_dir: Directory for logs, benchmark files and the ledger.
 
     Returns:
         Dict with keys from BenchmarkMetrics.summary() plus "mode" and "duration_s".
     """
-    import flwr as fl
-
-    from fl.datasets import get_dataset_loader
-    from fl.privacy import get_privacy_mode
-    from fl.client import make_client
-    from fl.server import make_strategy
+    from fl.compare.benchmark import aggregate_client_benchmarks, merge_server_and_clients
+    from fl.launch import run
 
     os.makedirs(output_dir, exist_ok=True)
-    os.environ["FL_SIMULATION"] = "1"
-    os.environ["FL_NUMBER_CLIENTS"] = str(config.num_clients)
 
     print(f"\n{'=' * 60}")
     print(f"  Mode: {mode_name.upper()}")
@@ -77,71 +70,43 @@ def run_mode(
     )
     print(f"{'=' * 60}\n")
 
-    # ── Data ──────────────────────────────────────────────────────────────────
-    Loader = get_dataset_loader(config.dataset)
-    spec = Loader.get_spec()
-    config.num_classes = spec.num_classes  # propagate spec → config
-
-    loader = Loader()
-    trainloaders, valloaders, testloader = loader.load(config)
-
-    # ── Privacy mode ──────────────────────────────────────────────────────────
-    mode_cfg = deepcopy(config)
-    mode_cfg.privacy_mode = mode_name
-
-    mode = get_privacy_mode(mode_name)
-
-    # ── Benchmark ─────────────────────────────────────────────────────────────
     if "he" in mode_name:
         print(
-            "[WARN] In-process simulation: HE modes measure encryption cost but transport "
+            "[WARN] Simulation: HE modes measure encryption cost but transport "
             "plaintext. Use the distributed runner for results about encrypted transport."
         )
-    benchmark = init_benchmark(
-        mode=mode_name,
-        num_clients=config.num_clients,
-        rounds=config.num_rounds,
-        transport="simulated",
-        zkp_backend=config.zkp_backend if "zkp" in mode_name else None,
-    )
 
-    # ── Strategy (server) ─────────────────────────────────────────────────────
-    strategy = make_strategy(
-        mode_cfg, mode, testloader, benchmark=benchmark, client_batches=max(len(t) for t in trainloaders)
-    )
-
-    # ── Client factory ────────────────────────────────────────────────────────
-    def client_fn(cid: str):
-        return make_client(
-            cid=cid,
-            trainloaders=trainloaders,
-            valloaders=valloaders,
-            mode=mode,
-            config=mode_cfg,
-            benchmark=benchmark,
-        )
-
-    # ── Simulation ────────────────────────────────────────────────────────────
+    overrides = {
+        **config.to_run_config(),
+        "mode": mode_name,
+        "sim-mode": True,
+        "benchmark": True,
+        "results-dir": os.path.abspath(output_dir),
+        "min-avail-clients": config.num_clients,
+    }
     t0 = time.perf_counter()
-    fl.simulation.start_simulation(
-        client_fn=client_fn,
-        num_clients=config.num_clients,
-        config=fl.server.ServerConfig(num_rounds=config.num_rounds),
-        strategy=strategy,
-        client_resources={"num_cpus": 1, "num_gpus": 0},
-    )
+    outcome = run(overrides, num_clients=config.num_clients, work_dir=output_dir, simulation=True)
     duration = time.perf_counter() - t0
+    if outcome["status"] != "finished:completed":
+        raise RuntimeError(f"run {outcome['run_id']} ended {outcome['status']}: {outcome['details']}")
 
     # ── Save results ──────────────────────────────────────────────────────────
-    summary = benchmark.summary()
+    def _load(name):
+        path = os.path.join(output_dir, name)
+        if not os.path.exists(path):
+            return None
+        with open(path) as f:
+            return json.load(f)
+
+    clients = [bm for i in range(config.num_clients) if (bm := _load(f"client_{i}_benchmark.json")) is not None]
+    summary = merge_server_and_clients(_load("benchmark.json"), aggregate_client_benchmarks(clients)) or {}
+    summary["mode"] = mode_name
     summary["duration_s"] = round(duration, 2)
 
     out_path = os.path.join(output_dir, f"benchmark_{mode_name}.json")
     with open(out_path, "w") as f:
         json.dump(summary, f, indent=2)
     print(f"\n[OK] Results saved → {out_path}")
-
-    benchmark.print_summary()
     return summary
 
 

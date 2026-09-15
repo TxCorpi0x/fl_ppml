@@ -56,6 +56,12 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     cli.add_argument("--zkp", action="store_true", default=False)
     cli.add_argument("--zkp_backend", type=str, default="gnark")
+    cli.add_argument(
+        "--privacy_mode",
+        type=str,
+        default=None,
+        help="Registered privacy mode name; overrides the --he/--zkp/--dp flag combination.",
+    )
     cli.add_argument("--zkp_params", type=str, default="keys/zkp/zkp_params.pkl")
     cli.add_argument("--dp", action="store_true", default=False)
     cli.add_argument("--dp_params", type=str, default="keys/dp/dp_params.pkl")
@@ -151,7 +157,7 @@ def main() -> None:
     from fl.core.benchmark import init_benchmark
     import flwr as fl
 
-    mode_name = _resolve_mode(args)
+    mode_name = args.privacy_mode or _resolve_mode(args)
 
     save_dir = args.save_results or "./results/"
 

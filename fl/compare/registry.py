@@ -221,6 +221,16 @@ MODES: Dict[str, ModeConfig] = {
         requires_key="keys/he_elgamal/secret_key.json",
         display_name="HE-ElGamal + ZKP (bound)",
     ),
+    # Commit–challenge coordinate sampling over committed ElGamal ciphertexts
+    # (audit/sampling.md). Two Flower rounds per federated round.
+    "he_elgamal_zkp_sampled": ModeConfig(
+        internal_mode="he_zkp",
+        he_backend="elgamal",
+        color="#1abc9c",
+        timeout_s=14400,
+        requires_key="keys/he_elgamal/secret_key.json",
+        display_name="HE-ElGamal + sampled ZKP (commit-challenge)",
+    ),
     # ── Triple: HE + ZKP + DP  ─────────────────────────────────────────────
     # internal_mode="he_zkp_dp" → _build_mode_flags emits --he --zkp --dp.
     # _resolve_mode detects all three flags and returns the composite key.

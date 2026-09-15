@@ -18,7 +18,15 @@ import torch
 
 from fl.core.zkp_gnark import DEFAULT_MAX_LAYER_N, expected_proof_layout
 from fl.models.registry import get_model
-from fl.privacy.zkp import ZKPSampledMode
+
+try:
+    from fl.privacy.zkp import ZKPSampledMode
+except ImportError as exc:
+    raise SystemExit(
+        "This script measures the Phase 1 layer-sampling code, replaced in Step 5 Phase 2. "
+        "Run it on commit 1cc62fb:  git checkout 1cc62fb -- fl/ && PYTHONPATH=. python "
+        "audit/evidence/sampling_evidence.py"
+    ) from exc
 
 SAMPLING_ENV = ("FL_ZKP_SAMPLE_PCT", "FL_ZKP_NUM_LAYERS", "FL_ZKP_SAMPLE_SEED", "FL_ZKP_SELECT_BY")
 

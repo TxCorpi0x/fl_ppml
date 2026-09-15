@@ -328,6 +328,9 @@ def run_simulation(
             cmd.extend([f"--{key}", str(value)])
 
     cmd.extend(_build_mode_flags(mode_cfg))
+    # Select the registered mode by key: flag combinations alone can't name
+    # modes such as zkp_sampled (audit/numbers.md item 1).
+    cmd.extend(["--privacy_mode", display_mode])
     cmd += [
         "--benchmark",
         "--save_results",
@@ -454,7 +457,9 @@ def run_distributed(
     if chain_ledger_path and chain_backend != "none":
         server_extra.extend(["--chain_ledger_path", chain_ledger_path])
 
-    mode_flags = _build_mode_flags(mode_cfg)
+    # Select the registered mode by key: flag combinations alone can't name
+    # modes such as zkp_sampled (audit/numbers.md item 1).
+    mode_flags = _build_mode_flags(mode_cfg) + ["--privacy_mode", display_mode]
 
     # ── server ────────────────────────────────────────────────────────────
     server_cmd = (

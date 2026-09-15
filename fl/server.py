@@ -143,6 +143,7 @@ class FedPrivate(fl.server.strategy.Strategy):
             "learning_rate": self.config.learning_rate,
             "batch_size": self.config.batch_size,
         }
+        fit_config.update(self.mode.fit_config(server_round))
         return [(client, FitIns(parameters, fit_config)) for client in clients]
 
     def aggregate_fit(
@@ -232,7 +233,7 @@ class FedPrivate(fl.server.strategy.Strategy):
     def configure_evaluate(
         self, server_round: int, parameters: Parameters, client_manager: ClientManager
     ) -> List[Tuple[ClientProxy, EvaluateIns]]:
-        if self.fraction_evaluate == 0.0:
+        if self.fraction_evaluate == 0.0 or not self.mode.evaluates_this_round(server_round):
             return []
         sample_size, min_num = self.num_evaluation_clients(
             client_manager.num_available()

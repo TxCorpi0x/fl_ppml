@@ -58,6 +58,12 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     srv.add_argument("--zkp", action="store_true", default=False)
     srv.add_argument("--zkp_backend", type=str, default="gnark")
+    srv.add_argument(
+        "--privacy_mode",
+        type=str,
+        default=None,
+        help="Registered privacy mode name; overrides the --he/--zkp/--dp flag combination.",
+    )
     srv.add_argument("--zkp_params", type=str, default="keys/zkp/zkp_params.pkl")
     srv.add_argument("--dp", action="store_true", default=False)
     srv.add_argument("--dp_params", type=str, default="keys/dp/dp_params.pkl")
@@ -166,7 +172,7 @@ def main() -> None:
     from fl.core.benchmark import init_benchmark
     import flwr as fl
 
-    mode_name = _resolve_mode(args)
+    mode_name = args.privacy_mode or _resolve_mode(args)
 
     # Determine results dir from model_save path, fallback to --save_results
     model_save = args.model_save or "./model.pth"
@@ -222,7 +228,8 @@ def main() -> None:
     print(f"Starting server [{mode_name}] at {server_address}")
     fl.server.start_server(
         server_address=server_address,
-        config=fl.server.ServerConfig(num_rounds=config.num_rounds),
+        # Commit–challenge modes take two Flower rounds per federated round.
+        config=fl.server.ServerConfig(num_rounds=config.num_rounds * mode.rounds_per_fl_round),
         strategy=strategy,
         grpc_max_message_length=grpc_max,
     )

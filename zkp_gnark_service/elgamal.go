@@ -265,35 +265,96 @@ func elgamalKeygen() (*big.Int, edbn254.PointAffine, error) {
 	return sk, mulBase(sk), nil
 }
 
-// elgamalProve encrypts quantized values under pk and proves the chunk statement.
+func checkValue(q int64, i int) error {
+	limit := elgamalOffset.Int64()
+	if q < -limit || q >= limit {
+		return fmt.Errorf("value %d at index %d outside [-%d, %d)", q, i, limit, limit)
+	}
+	return nil
+}
+
+// encryptWith returns (r·G, (q + offset)·G + r·PK).
+func encryptWith(pk edbn254.PointAffine, q int64, r *big.Int) elgamalCiphertext {
+	v := new(big.Int).Add(big.NewInt(q), elgamalOffset)
+	var rpk, c2 edbn254.PointAffine
+	rpk.ScalarMultiplication(&pk, r)
+	vg := mulBase(v)
+	c2.Add(&vg, &rpk)
+	return elgamalCiphertext{C1: mulBase(r), C2: c2}
+}
+
+// elgamalEncrypt encrypts quantized values under pk with fresh randomness,
+// returning the randomness so the client can later prove statements about
+// exactly these ciphertexts (commit–challenge sampling, audit/sampling.md).
+func elgamalEncrypt(pk edbn254.PointAffine, qs []int64) ([]elgamalCiphertext, []*big.Int, error) {
+	cts := make([]elgamalCiphertext, len(qs))
+	rands := make([]*big.Int, len(qs))
+	for i, q := range qs {
+		if err := checkValue(q, i); err != nil {
+			return nil, nil, err
+		}
+		r, err := randomScalar()
+		if err != nil {
+			return nil, nil, err
+		}
+		rands[i] = r
+	}
+	var wg sync.WaitGroup
+	sem := make(chan struct{}, runtime.GOMAXPROCS(0))
+	for i := range qs {
+		wg.Add(1)
+		sem <- struct{}{}
+		go func(i int) {
+			defer func() { <-sem; wg.Done() }()
+			cts[i] = encryptWith(pk, qs[i], rands[i])
+		}(i)
+	}
+	wg.Wait()
+	return cts, rands, nil
+}
+
+// elgamalProve encrypts quantized values under fresh randomness and proves the chunk statement.
 func elgamalProve(pk edbn254.PointAffine, qs []int64, bound, context *big.Int) ([]elgamalCiphertext, []byte, error) {
+	rands := make([]*big.Int, len(qs))
+	for i := range qs {
+		r, err := randomScalar()
+		if err != nil {
+			return nil, nil, err
+		}
+		rands[i] = r
+	}
+	return elgamalProveWith(pk, qs, rands, bound, context)
+}
+
+// elgamalProveWith proves the chunk statement for the ciphertexts determined by
+// (qs, rands). The returned ciphertexts are recomputed, so a proof made with
+// the wrong values or randomness will not verify against a stored commitment.
+func elgamalProveWith(pk edbn254.PointAffine, qs []int64, rands []*big.Int, bound, context *big.Int) ([]elgamalCiphertext, []byte, error) {
 	n := len(qs)
+	if len(rands) != n {
+		return nil, nil, fmt.Errorf("%d values but %d randomness scalars", n, len(rands))
+	}
 	cached, err := getElgamalCircuit(n)
 	if err != nil {
 		return nil, nil, err
 	}
-	limit := elgamalOffset.Int64()
+	params := edParams()
 	assignment := newElgamalCircuit(n)
 	assignment.PKX, assignment.PKY = coord(pk.X), coord(pk.Y)
 	assignment.Bound, assignment.Context = bound, context
 
 	cts := make([]elgamalCiphertext, n)
 	for i, q := range qs {
-		if q < -limit || q >= limit {
-			return nil, nil, fmt.Errorf("value %d at index %d outside [-%d, %d)", q, i, limit, limit)
-		}
-		v := new(big.Int).Add(big.NewInt(q), elgamalOffset)
-		r, err := randomScalar()
-		if err != nil {
+		if err := checkValue(q, i); err != nil {
 			return nil, nil, err
 		}
-		var rpk, c2 edbn254.PointAffine
-		rpk.ScalarMultiplication(&pk, r)
-		vg := mulBase(v)
-		c2.Add(&vg, &rpk)
-		cts[i] = elgamalCiphertext{C1: mulBase(r), C2: c2}
+		r := rands[i]
+		if r == nil || r.Sign() < 0 || r.Cmp(&params.Order) >= 0 {
+			return nil, nil, fmt.Errorf("randomness at index %d outside [0, order)", i)
+		}
+		cts[i] = encryptWith(pk, q, r)
 
-		assignment.Values[i], assignment.Rand[i] = v, r
+		assignment.Values[i], assignment.Rand[i] = new(big.Int).Add(big.NewInt(q), elgamalOffset), r
 		assignment.C1X[i], assignment.C1Y[i] = coord(cts[i].C1.X), coord(cts[i].C1.Y)
 		assignment.C2X[i], assignment.C2Y[i] = coord(cts[i].C2.X), coord(cts[i].C2.Y)
 	}
@@ -456,6 +517,112 @@ type elgamalProveRequest struct {
 	ValuesB64 string `json:"values_b64"` // little-endian int64 quantized q
 	BoundSq   string `json:"bound_sq"`
 	Context   string `json:"context"`
+}
+
+type elgamalEncryptRequest struct {
+	PK        string `json:"pk"`
+	ValuesB64 string `json:"values_b64"` // little-endian int64 quantized q
+}
+
+type elgamalProveWithRequest struct {
+	PK        string `json:"pk"`
+	ValuesB64 string `json:"values_b64"`
+	RandB64   string `json:"rand_b64"` // 32-byte big-endian scalars, one per value
+	BoundSq   string `json:"bound_sq"`
+	Context   string `json:"context"`
+}
+
+const scalarSize = 32
+
+func encodeScalars(rs []*big.Int) []byte {
+	out := make([]byte, len(rs)*scalarSize)
+	for i, r := range rs {
+		r.FillBytes(out[i*scalarSize : (i+1)*scalarSize])
+	}
+	return out
+}
+
+func decodeScalars(b64 string, n int) ([]*big.Int, error) {
+	raw, err := base64.StdEncoding.DecodeString(b64)
+	if err != nil {
+		return nil, err
+	}
+	if len(raw) != n*scalarSize {
+		return nil, fmt.Errorf("expected %d randomness bytes, got %d", n*scalarSize, len(raw))
+	}
+	out := make([]*big.Int, n)
+	for i := range out {
+		out[i] = new(big.Int).SetBytes(raw[i*scalarSize : (i+1)*scalarSize])
+	}
+	return out, nil
+}
+
+func elgamalEncryptHandler(w http.ResponseWriter, r *http.Request) {
+	start := time.Now()
+	var req elgamalEncryptRequest
+	if err := decodeJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	pkBytes, err := decodeHex(req.PK)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, fmt.Errorf("pk: %w", err))
+		return
+	}
+	pk, err := decodePublicKey(pkBytes)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, fmt.Errorf("pk: %w", err))
+		return
+	}
+	qs, err := decodeInt64s(req.ValuesB64)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, fmt.Errorf("values_b64: %w", err))
+		return
+	}
+	cts, rands, err := elgamalEncrypt(pk, qs)
+	if err != nil {
+		writeError(w, http.StatusUnprocessableEntity, err)
+		return
+	}
+	log.Printf("elgamal encrypt n=%d took=%s", len(qs), time.Since(start))
+	writeJSON(w, http.StatusOK, map[string]string{
+		"ct_b64":   base64.StdEncoding.EncodeToString(encodeCiphertexts(cts)),
+		"rand_b64": base64.StdEncoding.EncodeToString(encodeScalars(rands)),
+	})
+}
+
+func elgamalProveWithHandler(w http.ResponseWriter, r *http.Request) {
+	start := time.Now()
+	var req elgamalProveWithRequest
+	if err := decodeJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	pk, bound, ctx, err := decodePublicInputs(req.PK, req.BoundSq, req.Context)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	qs, err := decodeInt64s(req.ValuesB64)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, fmt.Errorf("values_b64: %w", err))
+		return
+	}
+	rands, err := decodeScalars(req.RandB64, len(qs))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, fmt.Errorf("rand_b64: %w", err))
+		return
+	}
+	cts, proof, err := elgamalProveWith(pk, qs, rands, bound, ctx)
+	if err != nil {
+		writeError(w, http.StatusUnprocessableEntity, err)
+		return
+	}
+	log.Printf("elgamal prove_with n=%d took=%s", len(qs), time.Since(start))
+	writeJSON(w, http.StatusOK, map[string]string{
+		"ct_b64":    base64.StdEncoding.EncodeToString(encodeCiphertexts(cts)),
+		"proof_b64": base64.StdEncoding.EncodeToString(proof),
+	})
 }
 
 type elgamalVerifyRequest struct {
@@ -684,6 +851,8 @@ func elgamalInfoHandler(w http.ResponseWriter, r *http.Request) {
 
 func registerElgamalRoutes() {
 	http.HandleFunc("/elgamal/prove", elgamalProveHandler)
+	http.HandleFunc("/elgamal/encrypt", elgamalEncryptHandler)
+	http.HandleFunc("/elgamal/prove_with", elgamalProveWithHandler)
 	http.HandleFunc("/elgamal/verify", elgamalVerifyHandler)
 	http.HandleFunc("/elgamal/aggregate", elgamalAggregateHandler)
 	http.HandleFunc("/elgamal/decrypt", elgamalDecryptHandler)

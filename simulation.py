@@ -63,6 +63,12 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     sim.add_argument("--zkp", action="store_true", default=False)
     sim.add_argument("--zkp_backend", type=str, default="gnark")
+    sim.add_argument(
+        "--privacy_mode",
+        type=str,
+        default=None,
+        help="Registered privacy mode name; overrides the --he/--zkp/--dp flag combination.",
+    )
     sim.add_argument("--zkp_params", type=str, default="keys/zkp/zkp_params.pkl")
     sim.add_argument("--dp", action="store_true", default=False)
     sim.add_argument("--dp_params", type=str, default="keys/dp/dp_params.pkl")
@@ -162,7 +168,7 @@ def main() -> None:
     from fl import FLConfig
     from fl.runner import run_mode
 
-    mode_name = _resolve_mode(args)
+    mode_name = args.privacy_mode or _resolve_mode(args)
 
     config = FLConfig(
         dataset=args.dataset,

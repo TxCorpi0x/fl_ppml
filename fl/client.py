@@ -132,6 +132,8 @@ class FlowerClient(fl.client.NumPyClient):
         """
         server_round = config["server_round"]
         self.mode.on_fit_config(self.crypto_ctx, config)
+        if not self.mode.trains_this_round(self.crypto_ctx):
+            return self._respond_without_training()
         local_epochs = int(config["local_epochs"])
         lr = float(config["learning_rate"])
         print(
@@ -316,6 +318,17 @@ class FlowerClient(fl.client.NumPyClient):
         return float(loss), len(self.valloader), eval_metrics
 
     # ── Internal helpers ──────────────────────────────────────────────────────
+
+    def _respond_without_training(self) -> Tuple[List[np.ndarray], int, Dict]:
+        """Challenge rounds: prove over the committed update; no download, no training."""
+        params = self.mode.send_parameters(
+            self.net,
+            self.crypto_ctx,
+            sim_mode=self.config.sim_mode,
+            benchmark=self.benchmark,
+            encrypt_layers=self.config.encrypt_layer_list,
+        )
+        return params, len(self.trainloader), self.mode.post_fit_metrics(self.crypto_ctx, self.benchmark)
 
     def _build_fit_metrics(self) -> Dict:
         """Collect fit-phase metrics from benchmark + mode plugin."""

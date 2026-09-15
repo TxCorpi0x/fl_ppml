@@ -131,3 +131,55 @@ func TestDecodeRejectsNonCanonicalPoints(t *testing.T) {
 		}
 	}
 }
+
+func TestElgamalCommitThenProveSampledCoordinates(t *testing.T) {
+	pk := mulBase(mustKeygen(t))
+	bound, ctx := big.NewInt(1_000_000), big.NewInt(9)
+	qs := []int64{5, -3, 700, 12}
+
+	committed, rands, err := elgamalEncrypt(pk, qs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Challenge picks coordinates 1 and 2; prove them with the stored randomness.
+	sampled := []elgamalCiphertext{committed[1], committed[2]}
+	recomputed, proof, err := elgamalProveWith(pk, []int64{qs[1], qs[2]}, []*big.Int{rands[1], rands[2]}, bound, ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := range sampled {
+		if !recomputed[i].C1.Equal(&sampled[i].C1) || !recomputed[i].C2.Equal(&sampled[i].C2) {
+			t.Fatalf("prove_with ciphertext %d differs from the commitment", i)
+		}
+	}
+	if ok, err := elgamalVerify(pk, sampled, bound, ctx, proof); err != nil || !ok {
+		t.Fatalf("proof over committed ciphertexts did not verify: %v", err)
+	}
+}
+
+func TestElgamalProofWithWrongRandomnessFailsAgainstCommitment(t *testing.T) {
+	pk := mulBase(mustKeygen(t))
+	bound, ctx := big.NewInt(1_000_000), big.NewInt(1)
+	qs := []int64{4, 8}
+	committed, _, err := elgamalEncrypt(pk, qs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, freshRands, _ := elgamalEncrypt(pk, qs)
+	_, proof, err := elgamalProveWith(pk, qs, freshRands, bound, ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ok, _ := elgamalVerify(pk, committed, bound, ctx, proof); ok {
+		t.Fatal("proof with different randomness verified against the committed ciphertexts")
+	}
+}
+
+func TestElgamalProveWithRejectsOutOfRangeRandomness(t *testing.T) {
+	pk := mulBase(mustKeygen(t))
+	params := edParams()
+	tooBig := new(big.Int).Set(&params.Order)
+	if _, _, err := elgamalProveWith(pk, []int64{1}, []*big.Int{tooBig}, big.NewInt(10), big.NewInt(0)); err == nil {
+		t.Fatal("randomness equal to the group order was accepted")
+	}
+}

@@ -56,6 +56,7 @@ def load_ledger_entries(path: Optional[str]) -> Optional[List[Dict[str, Any]]]:
 def validate_zkp_ledger(
     entries: Optional[List[Dict[str, Any]]],
     expected_rounds: Optional[int] = None,
+    required_rounds: Optional[List[int]] = None,
 ) -> Dict[str, Any]:
     """Check that every aggregated client emitted proofs in every round.
 
@@ -86,6 +87,8 @@ def validate_zkp_ledger(
     rounds = set(commits) | set(anchors)
     if expected_rounds:
         rounds |= set(range(1, expected_rounds + 1))
+    if required_rounds:
+        rounds |= set(required_rounds)
 
     proofs_per_client = set()
     for rnd in sorted(r for r in rounds if r is not None):
@@ -150,19 +153,28 @@ def validate_run(
 
     When outcomes are recorded, every expected round must have exactly one,
     and it must be ``aggregated`` with no rejected clients and no Flower
-    failures. A run with aborted or partially rejected rounds is not valid
-    benchmark evidence. Without recorded outcomes (runs from before they
-    existed), the ledger-only report and its warning are returned unchanged.
+    failures. Commit–challenge modes record two Flower rounds per federated
+    round: odd rounds must be ``committed`` and even rounds ``aggregated``,
+    and only even rounds carry ledger entries. A run with aborted or
+    partially rejected rounds is not valid benchmark evidence. Without
+    recorded outcomes (runs from before they existed), the ledger-only report
+    and its warning are returned unchanged.
     """
-    report = validate_zkp_ledger(entries, expected_rounds)
     if round_outcomes is None:
-        return report
+        return validate_zkp_ledger(entries, expected_rounds)
+
+    two_phase = any(o.get("outcome") == "committed" for o in round_outcomes)
+    flower_rounds = (expected_rounds or 0) * (2 if two_phase else 1)
+    if two_phase:
+        report = validate_zkp_ledger(entries, required_rounds=list(range(2, flower_rounds + 1, 2)))
+    else:
+        report = validate_zkp_ledger(entries, expected_rounds)
 
     errors = list(report["errors"])
     by_round: Dict[Any, List[Dict[str, Any]]] = defaultdict(list)
     for outcome in round_outcomes:
         by_round[outcome.get("round")].append(outcome)
-    for rnd in range(1, (expected_rounds or 0) + 1):
+    for rnd in range(1, flower_rounds + 1):
         if rnd not in by_round:
             errors.append(f"round {rnd}: no recorded outcome")
     for rnd, outs in sorted(by_round.items(), key=lambda kv: str(kv[0])):
@@ -170,7 +182,8 @@ def validate_run(
             errors.append(f"round {rnd}: {len(outs)} recorded outcomes")
             continue
         out = outs[0]
-        if out.get("outcome") != "aggregated":
+        expected = "committed" if two_phase and isinstance(rnd, int) and rnd % 2 == 1 else "aggregated"
+        if out.get("outcome") != expected:
             detail = out.get("detail") or out.get("rejected") or ""
             errors.append(f"round {rnd}: outcome {out.get('outcome')} {detail}".rstrip())
         elif out.get("rejected"):

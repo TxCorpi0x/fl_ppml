@@ -154,6 +154,49 @@ def prove_chunk(pk_hex: str, q: np.ndarray, bound_sq: int, context: int) -> Tupl
     return ct, data["proof_b64"]
 
 
+SCALAR_BYTES = 32  # big-endian encryption randomness per coordinate
+
+
+def _b64(data: bytes) -> str:
+    return base64.b64encode(data).decode("ascii")
+
+
+def encrypt_values(pk_hex: str, q: np.ndarray) -> Tuple[bytes, bytes]:
+    """Encrypt quantized values, returning (ciphertexts, randomness).
+
+    The randomness never leaves the client; it's needed to prove statements
+    about exactly these ciphertexts after the server's challenge.
+    """
+    data = _post(
+        "/elgamal/encrypt",
+        {"pk": pk_hex, "values_b64": _b64(np.asarray(q, dtype="<i8").tobytes())},
+        zkp_gnark.DEFAULT_PROVE_TIMEOUT,
+    )
+    ct, rand = base64.b64decode(data["ct_b64"]), base64.b64decode(data["rand_b64"])
+    if len(ct) != len(q) * CIPHERTEXT_BYTES or len(rand) != len(q) * SCALAR_BYTES:
+        raise ElGamalServiceError("/elgamal/encrypt returned a malformed response")
+    return ct, rand
+
+
+def prove_with(pk_hex: str, q: np.ndarray, rand: bytes, bound_sq: int, context: int) -> Tuple[bytes, str]:
+    """Prove the chunk statement for the ciphertexts determined by (q, rand)."""
+    data = _post(
+        "/elgamal/prove_with",
+        {
+            "pk": pk_hex,
+            "values_b64": _b64(np.asarray(q, dtype="<i8").tobytes()),
+            "rand_b64": _b64(rand),
+            "bound_sq": str(bound_sq),
+            "context": str(context),
+        },
+        zkp_gnark.DEFAULT_PROVE_TIMEOUT,
+    )
+    ct = base64.b64decode(data["ct_b64"])
+    if len(ct) != len(q) * CIPHERTEXT_BYTES or not data.get("proof_b64"):
+        raise ElGamalServiceError("/elgamal/prove_with returned a malformed response")
+    return ct, data["proof_b64"]
+
+
 def verify_chunk(pk_hex: str, ct: bytes, bound_sq: int, context: int, proof_b64: str) -> bool:
     """True iff the proof verifies for exactly these ciphertexts and public inputs.
 

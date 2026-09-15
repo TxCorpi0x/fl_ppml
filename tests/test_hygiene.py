@@ -116,3 +116,36 @@ def test_simulated_result_never_replaces_a_networked_one(tmp_path):
     newer = {"mode": "he_tenseal", "success": True, "benchmark": {"transport": "network", "rounds": 5}}
     _merge_into_dataset_report([newer], str(tmp_path), "healthcare")
     assert json.loads(report.read_text()) == [newer]
+
+
+# ─── Initial models are reproducible ─────────────────────────────────────────
+
+
+def test_clients_and_server_build_the_same_initial_model(tmp_path):
+    import numpy as np
+    import torch
+    from torch.utils.data import DataLoader, TensorDataset
+
+    from fl.client import make_client
+    from fl.config import FLConfig
+    from fl.privacy import get_privacy_mode
+    from fl.server import make_strategy
+
+    data = TensorDataset(torch.randn(32, 13), torch.randint(0, 2, (32,)))
+    loaders = [DataLoader(data, batch_size=8, shuffle=True) for _ in range(2)]
+    config = FLConfig(dataset="healthcare", seed=7, model_save=str(tmp_path / "none.pth"))
+    config.num_classes = 2
+
+    def weights(net):
+        return [t.detach().numpy().copy() for t in net.state_dict().values()]
+
+    torch.manual_seed(1)  # different global RNG state before each construction
+    a = weights(make_client("0", loaders, loaders, get_privacy_mode("baseline"), config).net)
+    torch.manual_seed(2)
+    b = weights(make_client("1", loaders, loaders, get_privacy_mode("baseline"), config).net)
+    torch.manual_seed(3)
+    server = weights(make_strategy(config, get_privacy_mode("baseline"), loaders[0]).central)
+
+    for x, y, z in zip(a, b, server):
+        np.testing.assert_array_equal(x, y)
+        np.testing.assert_array_equal(x, z)

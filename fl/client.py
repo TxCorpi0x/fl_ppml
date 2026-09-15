@@ -409,6 +409,11 @@ def make_client(
 
     # Auto-select model architecture from batch shape
     sample_batch = next(iter(trainloader))
+    # Seeded as in fl.server.make_strategy: every client and the server build
+    # the same initial model. HE modes take their initial model from one client,
+    # so an unseeded client model made those runs start from a different model
+    # each time.
+    torch.manual_seed(config.seed)
     net = get_model_for_batch(sample_batch, config.num_classes).to(device)
 
     # Load existing checkpoint if present

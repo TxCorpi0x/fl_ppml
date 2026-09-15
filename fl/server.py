@@ -1,12 +1,12 @@
 """
-Clean Flower server strategy.
+Flower ServerApp and the FedPrivate strategy (Flower Message API).
 
-Key differences from the legacy server.py:
-  - Zero module-level execution (no code runs on import)
-  - No wildcard imports
-  - Strategy is constructed via make_strategy() factory function
-  - All mode-specific aggregation delegated to the PrivacyMode plugin
-  - No if/elif mode chains
+The ServerApp builds an FLConfig from the run config, loads the server's test
+data and runs FedPrivate. FedPrivate samples SuperNodes, sends train and
+evaluate messages, and hands the replies to the PrivacyMode plugin, which owns
+every mode-specific decision (HE aggregation, proof verification, admission).
+Plugins see replies as ``(node, FitRes)`` pairs whose ``node.cid`` is the
+sending SuperNode's id, as assigned by the SuperLink.
 
 Adding a new privacy mode with custom aggregation:
   Override aggregate_fit_override() in the PrivacyMode subclass.
@@ -15,41 +15,46 @@ Adding a new privacy mode with custom aggregation:
 
 from __future__ import annotations
 
-import json
+import hashlib
 import logging
 import os
+import random
+import time
 from collections import OrderedDict
-from typing import Callable, Dict, List, Optional, Tuple, Union
+from dataclasses import dataclass
+from typing import Dict, Iterable, List, Optional, Tuple
 
-import numpy as np
 import torch
-import flwr as fl
-import flwr.server.strategy
+from flwr.app import ArrayRecord, ConfigRecord, Context, Message, MessageType, MetricRecord, RecordDict
 from flwr.common import (
-    EvaluateIns,
+    Code,
     EvaluateRes,
-    FitIns,
     FitRes,
-    Metrics,
-    MetricsAggregationFn,
-    NDArrays,
     Parameters,
     Scalar,
+    Status,
     ndarrays_to_parameters,
     parameters_to_ndarrays,
 )
-from flwr.server.client_manager import ClientManager
-from flwr.server.client_proxy import ClientProxy
-from flwr.server.strategy.aggregate import weighted_loss_avg
+from flwr.serverapp import Grid, ServerApp
+from flwr.serverapp.strategy import Strategy
 
 from fl.chain import get_chain
-from fl.config import FLConfig
+from fl.config import FLConfig, apply_process_env
 from fl.core.engine import test
 from fl.core.security import aggregate_custom
 from fl.core.benchmark import BenchmarkTimer, get_memory_usage_mb, get_benchmark
 from fl.privacy.base import PrivacyMode
+from fl.records import config_record, metric_record
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class Node:
+    """The sender of a reply, as privacy-mode plugins see it."""
+
+    cid: str
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -57,11 +62,11 @@ logger = logging.getLogger(__name__)
 # ─────────────────────────────────────────────────────────────────────────────
 
 
-class FedPrivate(fl.server.strategy.Strategy):
+class FedPrivate(Strategy):
     """
     FedAvg-based strategy that delegates mode-specific aggregation to
-    the PrivacyMode plugin.  Strategy internals (sampling, routing, eval)
-    are identical to FedAvg.
+    the PrivacyMode plugin.  Sampling, routing and evaluation are those of
+    FedAvg, with bounded waits for nodes.
 
     Args:
         config:         Experiment configuration.
@@ -89,7 +94,6 @@ class FedPrivate(fl.server.strategy.Strategy):
         min_evaluate_clients: int = 2,
         min_available_clients: int = 2,
     ) -> None:
-        super().__init__()
         self.config = config
         self.mode = mode
         self.server_context = server_context
@@ -103,57 +107,84 @@ class FedPrivate(fl.server.strategy.Strategy):
         self.min_fit_clients = min_fit_clients
         self.min_evaluate_clients = min_evaluate_clients
         self.min_available_clients = min_available_clients
+        # Nodes sampled per (phase, round), to count the ones that never replied.
+        self._sampled: Dict[Tuple[str, int], List[int]] = {}
 
     def __repr__(self) -> str:
         return f"FedPrivate(mode={self.mode.name})"
 
-    def _wait_for_clients(self, client_manager: ClientManager, phase: str, server_round: int) -> None:
-        """Wait a bounded time for min_available_clients, then stop the run.
+    def summary(self) -> None:
+        print(
+            f"{self!r}: fraction_fit={self.fraction_fit}, fraction_evaluate={self.fraction_evaluate}, "
+            f"min_fit_clients={self.min_fit_clients}, min_evaluate_clients={self.min_evaluate_clients}, "
+            f"min_available_clients={self.min_available_clients}"
+        )
 
-        Flower's own wait is 24 hours; after every client had exited, the server
-        sat in it until killed by hand. Raising ends the run with a clear error.
+    # ── Running ───────────────────────────────────────────────────────────────
+
+    def run(self, grid: Grid) -> None:
+        """Run every Flower round of the experiment on ``grid``."""
+        self.start(
+            grid=grid,
+            initial_arrays=self.initial_arrays(grid),
+            # Commit–challenge modes take two Flower rounds per federated round.
+            num_rounds=self.config.num_rounds * self.mode.rounds_per_fl_round,
+            timeout=self._round_timeout(),
+            evaluate_fn=self.evaluate_fn,
+        )
+
+    def _round_timeout(self) -> Optional[float]:
+        return self.config.round_timeout or None
+
+    def initial_arrays(self, grid: Grid) -> ArrayRecord:
+        """The round-1 model: the server's own, or one client's for modes whose download must be encrypted."""
+        # For modes like TFHE (server has no private key), a client's
+        # get_parameters() makes the round-1 download already encrypted.
+        if not self.mode.use_client_for_initial_params(self.config):
+            return ArrayRecord.from_numpy_ndarrays([val.cpu().numpy() for val in self.central.state_dict().values()])
+        [node] = self._sample(grid, "initial parameters", 0, 0.0, 1)
+        request = Message(RecordDict({"config": ConfigRecord()}), dst_node_id=node, message_type=MessageType.QUERY, group_id="0")
+        replies = list(grid.send_and_receive([request], timeout=self._round_timeout()))
+        if not replies or replies[0].has_error() or "arrays" not in replies[0].content:
+            reason = replies[0].error.reason if replies and replies[0].has_error() else "no parameters"
+            raise RuntimeError(f"node {node} did not return initial parameters: {reason}")
+        return replies[0].content["arrays"]
+
+    # ── Node sampling ─────────────────────────────────────────────────────────
+
+    def _wait_for_nodes(self, grid: Grid, phase: str, server_round: int) -> List[int]:
+        """Wait a bounded time for min_available_clients nodes, then stop the run.
+
+        Flower's own sampling waits indefinitely; after every client had exited,
+        the server sat in that wait until killed by hand. Raising ends the run
+        with a clear error.
         """
         timeout = int(os.environ.get("FL_CLIENT_WAIT_TIMEOUT", "600"))
-        if not client_manager.wait_for(self.min_available_clients, timeout=timeout):
-            raise RuntimeError(
-                f"round {server_round} {phase}: only {client_manager.num_available()} of "
-                f"{self.min_available_clients} required clients available after {timeout}s; stopping the run"
-            )
+        deadline = time.monotonic() + timeout
+        while True:
+            nodes = list(grid.get_node_ids())
+            if len(nodes) >= self.min_available_clients:
+                return nodes
+            if time.monotonic() >= deadline:
+                raise RuntimeError(
+                    f"round {server_round} {phase}: only {len(nodes)} of "
+                    f"{self.min_available_clients} required clients available after {timeout}s; stopping the run"
+                )
+            time.sleep(1.0)
+
+    def _sample(self, grid: Grid, phase: str, server_round: int, fraction: float, minimum: int) -> List[int]:
+        # Size the sample only after min_available_clients have connected; sizing
+        # it first sampled 2 of 3 clients in round 1 whenever one was still starting.
+        nodes = self._wait_for_nodes(grid, phase, server_round)
+        size = min(len(nodes), max(int(len(nodes) * fraction), minimum))
+        return random.sample(nodes, size)
 
     # ── Flower protocol ───────────────────────────────────────────────────────
 
-    def initialize_parameters(
-        self, client_manager: ClientManager
-    ) -> Optional[Parameters]:
-        # For modes like TFHE (server has no private key), let Flower poll a
-        # client's get_parameters() so round-1 download is already encrypted.
-        if self.mode.use_client_for_initial_params(self.config):
-            return None
-        params = [val.cpu().numpy() for val in self.central.state_dict().values()]
-        return ndarrays_to_parameters(params)
-
-    def num_fit_clients(self, num_available: int) -> Tuple[int, int]:
-        return (
-            max(int(num_available * self.fraction_fit), self.min_fit_clients),
-            self.min_available_clients,
-        )
-
-    def num_evaluation_clients(self, num_available: int) -> Tuple[int, int]:
-        return (
-            max(int(num_available * self.fraction_evaluate), self.min_evaluate_clients),
-            self.min_available_clients,
-        )
-
-    def configure_fit(
-        self, server_round: int, parameters: Parameters, client_manager: ClientManager
-    ) -> List[Tuple[ClientProxy, FitIns]]:
-        # Size the sample only after min_available_clients have connected; sizing
-        # it first sampled 2 of 3 clients in round 1 whenever one was still starting.
-        self._wait_for_clients(client_manager, "fit", server_round)
-        sample_size, min_num = self.num_fit_clients(client_manager.num_available())
-        clients = client_manager.sample(
-            num_clients=sample_size, min_num_clients=min_num
-        )
+    def configure_train(
+        self, server_round: int, arrays: ArrayRecord, config: ConfigRecord, grid: Grid
+    ) -> Iterable[Message]:
+        nodes = self._sample(grid, "fit", server_round, self.fraction_fit, self.min_fit_clients)
         fit_config = {
             "server_round": server_round,
             "local_epochs": self.config.local_epochs,
@@ -161,12 +192,49 @@ class FedPrivate(fl.server.strategy.Strategy):
             "batch_size": self.config.batch_size,
         }
         fit_config.update(self.mode.fit_config(server_round))
-        return [(client, FitIns(parameters, fit_config)) for client in clients]
+        self._sampled[("train", server_round)] = nodes
+        content = RecordDict({"arrays": arrays, "config": config_record(fit_config)})
+        return [
+            Message(content, dst_node_id=node, message_type=MessageType.TRAIN, group_id=str(server_round))
+            for node in nodes
+        ]
+
+    def aggregate_train(
+        self, server_round: int, replies: Iterable[Message]
+    ) -> Tuple[Optional[ArrayRecord], Optional[MetricRecord]]:
+        results, failures = self._fit_results(server_round, replies)
+        params_agg, metrics_agg = self.aggregate_fit(server_round, results, failures)
+        arrays = None if params_agg is None else ArrayRecord.from_numpy_ndarrays(parameters_to_ndarrays(params_agg))
+        metrics = metric_record(metrics_agg or {})
+        return arrays, (metrics or None)
+
+    def _fit_results(self, server_round: int, replies: Iterable[Message]):
+        """Train replies as (Node, FitRes) results; error, malformed and missing replies as failures."""
+        results, failures, replied = [], [], set()
+        for msg in replies:
+            node = msg.metadata.src_node_id
+            replied.add(node)
+            if msg.has_error():
+                failures.append(RuntimeError(f"node {node}: {msg.error.reason}"))
+                continue
+            try:
+                content = msg.content
+                params = ndarrays_to_parameters(content["arrays"].to_numpy_ndarrays())
+                metrics = dict(content["fit_metrics"]) if "fit_metrics" in content else {}
+                num_examples = int(content["metrics"]["num-examples"])
+            except (AttributeError, KeyError, TypeError, ValueError) as exc:
+                failures.append(RuntimeError(f"node {node}: malformed train reply ({exc!r})"))
+                continue
+            results.append((Node(str(node)), FitRes(Status(Code.OK, ""), params, num_examples, metrics)))
+        for node in self._sampled.pop(("train", server_round), []):
+            if node not in replied:
+                failures.append(TimeoutError(f"node {node}: no train reply"))
+        return results, failures
 
     def aggregate_fit(
         self,
         server_round: int,
-        results: List[Tuple[ClientProxy, FitRes]],
+        results: List[Tuple[Node, FitRes]],
         failures,
     ) -> Tuple[Optional[Parameters], Dict[str, Scalar]]:
         bm = self.benchmark or get_benchmark()
@@ -248,45 +316,48 @@ class FedPrivate(fl.server.strategy.Strategy):
         return params_agg, {}
 
     def configure_evaluate(
-        self, server_round: int, parameters: Parameters, client_manager: ClientManager
-    ) -> List[Tuple[ClientProxy, EvaluateIns]]:
+        self, server_round: int, arrays: ArrayRecord, config: ConfigRecord, grid: Grid
+    ) -> Iterable[Message]:
         if self.fraction_evaluate == 0.0 or not self.mode.evaluates_this_round(server_round):
             return []
-        self._wait_for_clients(client_manager, "evaluate", server_round)
-        sample_size, min_num = self.num_evaluation_clients(
-            client_manager.num_available()
-        )
-        clients = client_manager.sample(
-            num_clients=sample_size, min_num_clients=min_num
-        )
-        return [(c, EvaluateIns(parameters, {})) for c in clients]
+        nodes = self._sample(grid, "evaluate", server_round, self.fraction_evaluate, self.min_evaluate_clients)
+        self._sampled[("evaluate", server_round)] = nodes
+        content = RecordDict({"arrays": arrays, "config": ConfigRecord({"server_round": server_round})})
+        return [
+            Message(content, dst_node_id=node, message_type=MessageType.EVALUATE, group_id=str(server_round))
+            for node in nodes
+        ]
 
-    def aggregate_evaluate(
-        self,
-        server_round: int,
-        results: List[Tuple[ClientProxy, EvaluateRes]],
-        failures,
+    def aggregate_evaluate(self, server_round: int, replies: Iterable[Message]) -> Optional[MetricRecord]:
+        results = []
+        for msg in replies:
+            if msg.has_error():
+                print(f"[Round {server_round}] evaluate failed on node {msg.metadata.src_node_id}: {msg.error.reason}")
+                continue
+            try:
+                metrics = dict(msg.content["metrics"])
+                loss, num_examples = float(metrics.pop("loss")), int(metrics.pop("num-examples"))
+            except (AttributeError, KeyError, TypeError, ValueError) as exc:
+                print(f"[Round {server_round}] malformed evaluate reply from node {msg.metadata.src_node_id}: {exc!r}")
+                continue
+            results.append((Node(str(msg.metadata.src_node_id)), EvaluateRes(Status(Code.OK, ""), loss, num_examples, metrics)))
+        self._sampled.pop(("evaluate", server_round), None)
+        loss, metrics = self._aggregate_evaluate_results(results)
+        return None if loss is None else MetricRecord({"loss": loss, **metrics})
+
+    def _aggregate_evaluate_results(
+        self, results: List[Tuple[Node, EvaluateRes]]
     ) -> Tuple[Optional[float], Dict[str, Scalar]]:
         if not results:
             return None, {}
-        loss_agg = weighted_loss_avg(
-            [(res.num_examples, res.loss) for _, res in results]
-        )
         examples = [res.num_examples for _, res in results]
         total_examples = sum(examples)
+        if not total_examples:
+            return None, {}
+        loss_agg = sum(res.num_examples * res.loss for _, res in results) / total_examples
 
         def _wavg(key: str) -> float:
-            return (
-                (
-                    sum(
-                        res.num_examples * (res.metrics or {}).get(key, 0)
-                        for _, res in results
-                    )
-                    / total_examples
-                )
-                if total_examples
-                else 0.0
-            )
+            return sum(res.num_examples * (res.metrics or {}).get(key, 0) for _, res in results) / total_examples
 
         metrics = {"accuracy": _wavg("accuracy")}
 
@@ -309,6 +380,14 @@ class FedPrivate(fl.server.strategy.Strategy):
                     bm.add_test_threshold(m["test_threshold"])
 
         return loss_agg, metrics
+
+    def evaluate_fn(self, server_round: int, arrays: ArrayRecord) -> Optional[MetricRecord]:
+        """Centralized evaluation hook for Strategy.start."""
+        out = self.evaluate(server_round, ndarrays_to_parameters(arrays.to_numpy_ndarrays()))
+        if out is None:
+            return None
+        loss, metrics = out
+        return MetricRecord({"loss": float(loss), **metrics})
 
     def evaluate(
         self, server_round: int, parameters: Parameters
@@ -354,8 +433,6 @@ class FedPrivate(fl.server.strategy.Strategy):
         # Persist checkpoint
         results_dir = self.config.results_dir
         if results_dir and self.config.model_save:
-            import os
-
             os.makedirs(results_dir, exist_ok=True)
             torch.save(
                 {"model_state_dict": self.central.state_dict()}, self.config.model_save
@@ -419,8 +496,6 @@ class FedPrivate(fl.server.strategy.Strategy):
         if report and report.get("round") == server_round:
             admitted = set(report.get("admitted", []))
             results = [(cp, fr) for cp, fr in results if str(cp.cid) in admitted]
-
-        import hashlib
 
         # ── Hash the aggregated model parameters ──────────────────────────────
         h = hashlib.sha256()
@@ -504,7 +579,7 @@ def make_strategy(
                     same partition clients use; sizes the ZKP update bound.
 
     Returns:
-        A fully configured FedPrivate strategy ready for fl.server.start_server().
+        A fully configured FedPrivate strategy; run it with ``strategy.run(grid)``.
     """
     from fl.models import get_model_for_batch
 
@@ -533,3 +608,52 @@ def make_strategy(
         min_evaluate_clients=config.effective_min_eval_clients,
         min_available_clients=config.min_avail_clients,
     )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# ServerApp
+# ─────────────────────────────────────────────────────────────────────────────
+
+server_app = ServerApp()
+
+
+@server_app.main()
+def main(grid: Grid, context: Context) -> None:
+    """Run one experiment from the run config; write benchmark.json to its results-dir."""
+    from fl.core.benchmark import init_benchmark
+    from fl.datasets import get_dataset_loader
+    from fl.privacy import get_privacy_mode
+
+    config = FLConfig.from_run_config(context.run_config)
+    apply_process_env(config)
+
+    Loader = get_dataset_loader(config.dataset)
+    config.num_classes = Loader.get_spec().num_classes
+    # Clients partition the same data with the same seed; the largest shard's
+    # batch count sizes the ZKP update-norm bound (fl/core/update_bound.py).
+    trainloaders, _, testloader = Loader().load(config)
+
+    mode = get_privacy_mode(config.privacy_mode)
+    benchmark = (
+        init_benchmark(
+            config.privacy_mode,
+            config.num_clients,
+            config.num_rounds,
+            transport="simulated" if config.sim_mode else "network",
+            zkp_backend=config.zkp_backend if "zkp" in config.privacy_mode else None,
+        )
+        if config.benchmark
+        else None
+    )
+    strategy = make_strategy(
+        config, mode, testloader, benchmark=benchmark, client_batches=max(len(t) for t in trainloaders)
+    )
+
+    print(f"Starting ServerApp [{config.privacy_mode}]")
+    strategy.run(grid)
+
+    if benchmark:
+        os.makedirs(config.results_dir, exist_ok=True)
+        bench_path = os.path.join(config.results_dir, "benchmark.json")
+        benchmark.save(bench_path)
+        benchmark.print_summary()

@@ -469,7 +469,7 @@ All tuning is via environment variables — no code changes required. Variables 
 | `FL_ZKP_SAMPLE_PCT` | `0.1` | Sampled modes: fraction of model coordinates proven per client per round, in (0, 1]. Set on the server; the per-round seed is drawn by the server after clients commit and recorded in `round_outcomes` |
 | `FL_ZKP_PARALLELISM` | `4` | Concurrent proof workers |
 | `FL_ZKP_SCALE` | `1000000` | Float→int64 scale for the proof circuit |
-| `FL_ZKP_MAX_NORM` | `100.0` | Max ℓ₂ gradient norm in circuit; match to DP clipping norm when combining |
+| `FL_ZKP_MAX_NORM` | calibrated per dataset | Overrides the server's **update**-norm bound B on ‖w_local − w_global‖₂ (not a weight norm). Default: `PER_EPOCH_UPDATE_NORM[dataset] × local_epochs` in `fl/core/update_bound.py`, from `scripts/calibrate_update_norm.py`. Clients clip their update to B before proving. DP runs need their own calibration (DP noise enlarges honest updates); the DP clipping norm is a per-step gradient clip and is not a valid value |
 | `FL_ZKP_TIMEOUT` | `120` | Per-call timeout (seconds) for the gnark HTTP service |
 
 **Failure handling.** Security-relevant paths fail closed (`audit/failmodes.md`):
@@ -488,7 +488,7 @@ All tuning is via environment variables — no code changes required. Variables 
 | `FL_ENCRYPT_LAYERS` | `ALL` | TenSEAL layers to encrypt; unlisted layers are sent in plaintext. Names not in the model are an error |
 | `FL_CONCRETE_TFHE_FORCE_REAL` | `0` | `1` = run real TFHE on image datasets (high RAM) |
 | `FL_CONCRETE_TFHE_ALLOW_SIMULATED` | `0` | `1` = knowingly send plaintext quantized weights on image datasets; otherwise TFHE on images refuses to run |
-| `FL_ELGAMAL_SCALE` | `1000` | `he_elgamal_zkp` quantization: q = round(w·scale), \|q\| < 2¹⁷ |
+| `FL_ELGAMAL_SCALE` | `10000` | `he_elgamal_zkp` quantization: q = round(w·scale), \|q\| < 2¹⁷ (so \|w\| < 13.1). The proven bound is W²·⌈B·scale + √n/2⌉²; the √n/2 rounding slack is small only when B·scale ≫ √n, which is why the default rose from 1000 |
 | `FL_ZKP_PROVER_URL` | `http://127.0.0.1:9000` | gnark prover role (clients) |
 | `FL_ZKP_VERIFIER_URL` | `http://127.0.0.1:9001` | gnark verifier role (server) |
 | `FL_ZKP_KEYS_DIR` | `zkp_gnark_service/keys` | Pinned manifest and verifying keys. The circuit sizes (norm chunk, ElGamal coordinates per proof) come from this manifest |

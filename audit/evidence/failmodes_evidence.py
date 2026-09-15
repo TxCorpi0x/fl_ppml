@@ -12,6 +12,7 @@ in that file's Phase 2 section. No source files are modified.
 import contextlib
 import io
 import json
+import os
 from collections import OrderedDict
 from types import SimpleNamespace as NS
 
@@ -60,13 +61,18 @@ class SchemaModel(torch.nn.Module):
 
 
 FAKE_PROOFS = [
-    {"layer": k, "shape": list(v.shape), "scale": str(float(zg.DEFAULT_SCALE)), "bound_sq": str(zg.policy_bound_sq()) if hasattr(zg, "policy_bound_sq") else "1", "hash_hex": "ab", "proof_b64": "AA=="}
+    # bound_sq "1" is a valid declared bound; the proofs themselves are fake.
+    {"layer": k, "shape": list(v.shape), "scale": str(float(zg.DEFAULT_SCALE)), "bound_sq": "1", "hash_hex": "ab", "proof_b64": "AA=="}
     for k, v in W.items()
 ]
 cfg = NS(zkp_backend="gnark", sim_mode=False)
 
 
 def bind(mode):
+    # Since Step 7 a ZKP server needs its update-norm bound before aggregating.
+    if hasattr(zg, "policy_bound_sq") and "max_update_norm" in zg.policy_bound_sq.__code__.co_varnames:
+        os.environ.setdefault("FL_ZKP_MAX_NORM", "1.0")
+        getattr(mode, "_zkp_mode", mode).setup_server_context(cfg)
     if hasattr(mode, "bind_server_model"):
         mode.bind_server_model(None, SchemaModel())
     return mode

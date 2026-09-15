@@ -983,7 +983,7 @@ The proof service binary (`gnark_service`) compiles to `~18 MB` and runs as a li
 
 In standard FL, the server aggregates gradient updates assuming all clients are honest. A **Byzantine adversary** — a malicious client — can submit any gradient: inflated norms, backdoor-poisoned updates, or manufactured updates to bias the global model. Homomorphic encryption (HE) protects *confidentiality* from the server, but does nothing to stop a malicious client from encrypting a poisoned gradient.
 
-**ZKP addresses this orthogonal threat**: clients generate cryptographic proofs that their model update satisfies structural constraints (bounded gradient norm, hash commitment to parameters) *before* the server aggregates. The server verifies the proof — a fast operation — before including the update. A poisoned update that violates the proven constraints will cause proof verification to fail.
+**ZKP addresses this orthogonal threat**: clients generate cryptographic proofs that their model update satisfies structural constraints (bounded gradient norm, hash commitment to parameters) *before* the server aggregates. The server verifies the proof — a fast operation — before including the update. A client whose update exceeds the server's update-norm bound cannot produce an admissible proof set. The bound limits how far one admitted client can move the model per round; it does not make a bounded update benign (audit/norm.md).
 
 | Threat | HE Address? | ZKP Addresses? |
 |--------|-------------|---------------|
@@ -1513,7 +1513,7 @@ python main_client.py client --zkp --zkp_backend gnark \
 | `FL_ZKP_PROVER_URL` | `http://127.0.0.1:9000` | Any URL | gnark prover role (clients) |
 | `FL_ZKP_VERIFIER_URL` | `http://127.0.0.1:9001` | Any URL | gnark verifier role (server) |
 | `FL_ZKP_SCALE` | `1000000` | Positive integer | Float→int64 quantization scale. Higher = more precision; too high = integer overflow |
-| `FL_ZKP_MAX_NORM` | `100.0` | Positive float | Max allowed L2 norm of the gradient vector encoded in the proof circuit |
+| `FL_ZKP_MAX_NORM` | calibrated | Positive float | Server's update-norm bound B on ‖w_local − w_global‖₂ (overrides the per-dataset calibration in `fl/core/update_bound.py`) |
 | `FL_ZKP_TIMEOUT` | `120` | Positive integer (s) | HTTP request timeout for each proof call. Increase for large models or slow hardware |
 | `FL_ZKP_LAYERS` | `ALL` | `ALL` or CSV layer names | Which layers to prove when using the full (non-sampled) ZKP mode. `ALL` proves every layer |
 | `FL_ZKP_SELECT_BY` | `size` | `size`, `random` | Layer selection strategy for `zkp_sampled`. `size` picks the layers with the most parameters (strongest coverage of the norm bound); `random` samples uniformly (varies across rounds) |
@@ -1597,7 +1597,7 @@ export FL_ZKP_BACKEND=gnark
 export FL_ZKP_PROVER_URL="http://127.0.0.1:9000"
 export FL_ZKP_VERIFIER_URL="http://127.0.0.1:9001"
 export FL_ZKP_SCALE=1000000
-export FL_ZKP_MAX_NORM=100.0
+# FL_ZKP_MAX_NORM: optional update-norm override; the default is calibrated per dataset
 export FL_ZKP_TIMEOUT=120
 export FL_ZKP_LAYERS=ALL
 ```
@@ -1675,15 +1675,16 @@ The default `1,000,000` works for standard neural network weights.
 
 #### Tuning `FL_ZKP_MAX_NORM`
 
-This is the maximum allowed $\ell_2$ norm of the gradient update vector. Set equal to the DP clipping norm if using both DP and ZKP (they share the same bound):
+The circuits bound the **update** ‖w_local − w_global‖₂, not the weights (audit/norm.md). The server sets the bound B and sends it to clients, which clip their update to B before proving. By default B is calibrated per dataset and scaled by local epochs:
 
 ```bash
-## DP clipping norm = 1.0 (strong privacy)
-export FL_ZKP_MAX_NORM=1.0
-
-## Standard federated learning
-export FL_ZKP_MAX_NORM=100.0
+PYTHONPATH=. python scripts/calibrate_update_norm.py --dataset healthcare --clients 3 --rounds 5
+## → add per_epoch_bound to PER_EPOCH_UPDATE_NORM in fl/core/update_bound.py
+## or override for one run (an update norm, e.g. for DP runs):
+export FL_ZKP_MAX_NORM=0.05
 ```
+
+Do not set it to the DP clipping norm: that is a per-step gradient clip, unrelated to the size of a round's update.
 
 ---
 
@@ -1825,7 +1826,7 @@ python simulation.py simulation --zkp --zkp_backend gnark --rounds 3 --benchmark
 | `FL_ZKP_PROVER_URL` | `http://127.0.0.1:9000` | Prover service (clients) |
 | `FL_ZKP_VERIFIER_URL` | `http://127.0.0.1:9001` | Verifier service (server) |
 | `FL_ZKP_SCALE` | `1000000` | Quantization scale for weights |
-| `FL_ZKP_MAX_NORM` | `100.0` | Max gradient norm for proof |
+| `FL_ZKP_MAX_NORM` | calibrated | Update-norm bound override (see `fl/core/update_bound.py`) |
 | `FL_ZKP_TIMEOUT` | `120` | Service call timeout (seconds) |
 | `FL_ZKP_LAYERS` | `ALL` | Layers to prove (CSV or `ALL`) |
 | `FL_ZKP_SELECT_BY` | `size` | Sampling strategy: `size` or `random` |

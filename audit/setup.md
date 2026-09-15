@@ -143,6 +143,7 @@ Results: Go `ok`; Python `103 passed, 1 xfailed` (the xfail is the documented S1
 |---|---|---|---|---|---|
 | norm | 256 | 86,725 | 4.4 s | 520 B | 30.8 MB |
 | elgamal | 128 | 805,082 | 30.4 s | 17.0 KB | 245.7 MB |
+| elgamal (Step 7 update circuit, re-pinned 2026-09-15; the norm keys were regenerated in the same run) | 128 | 1,274,949 | 48.0 s | 33.4 KB | 420.2 MB |
 
 Setup peak memory: 1.6 GB. Measured through the harness with these keys:
 - Both roles healthy in 4.2 s; a second `_ensure_gnark_service` reused them in 0.0 s.

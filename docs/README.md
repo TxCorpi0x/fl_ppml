@@ -407,7 +407,7 @@ All tuning is done via environment variables — no code changes required. Varia
 | `FL_ZKP_SAMPLE_SEED` | — | Integer | Fixes layer sampling for reproducible benchmarks; omit to vary across rounds |
 | `FL_ZKP_PARALLELISM` | `4` | Positive integer | Concurrent proof workers. Increase for high-core servers; diminishing returns above gnark host CPU count |
 | `FL_ZKP_SCALE` | `1000000` | Positive integer | Float→int64 scale. Too low = precision loss; too high = integer overflow |
-| `FL_ZKP_MAX_NORM` | `100.0` | Positive float | Max L2 gradient norm embedded in the proof circuit. Match to DP clipping norm when combining DP + ZKP |
+| `FL_ZKP_MAX_NORM` | calibrated | Positive float | Server's update-norm bound B on ‖w_local − w_global‖₂ (overrides the per-dataset calibration in `fl/core/update_bound.py`). Not the DP clipping norm |
 | `FL_ZKP_TIMEOUT` | `120` | Seconds | Per-call timeout for the gnark HTTP service. Increase for large models or first-run compilation |
 | `FL_ZKP_LAYERS` | `ALL` | `ALL` or CSV names | Layers to prove in full (non-sampled) ZKP mode |
 

@@ -57,15 +57,21 @@ def _build_parser() -> argparse.ArgumentParser:
         default="tenseal",
         choices=["tenseal", "concrete", "concrete_tfhe"],
     )
-    sim.add_argument("--path_keys", type=str, default="keys/he_tenseal/secret_key.pkl")
+    sim.add_argument("--path_keys", type=str, default="keys/he_tenseal/secret_context.bin")
     sim.add_argument(
-        "--path_public_key", type=str, default="keys/he_tenseal/public_key.pkl"
+        "--path_public_key", type=str, default="keys/he_tenseal/public_context.bin"
     )
     sim.add_argument("--zkp", action="store_true", default=False)
-    sim.add_argument("--zkp_backend", type=str, default="pedersen")
-    sim.add_argument("--zkp_params", type=str, default="keys/zkp/zkp_params.pkl")
+    sim.add_argument("--zkp_backend", type=str, default="gnark")
+    sim.add_argument(
+        "--privacy_mode",
+        type=str,
+        default=None,
+        help="Registered privacy mode name; overrides the --he/--zkp/--dp flag combination.",
+    )
+    sim.add_argument("--zkp_params", type=str, default="keys/zkp/zkp_params.json")
     sim.add_argument("--dp", action="store_true", default=False)
-    sim.add_argument("--dp_params", type=str, default="keys/dp/dp_params.pkl")
+    sim.add_argument("--dp_params", type=str, default="keys/dp/dp_params.json")
     sim.add_argument(
         "--dp_epsilon",
         type=float,
@@ -121,12 +127,16 @@ def _resolve_mode(args) -> str:
     if args.he and args.zkp and args.dp:
         # Triple combination: FHE + ZKP + DP
         backend = (args.he_backend or "tenseal").lower()
+        if backend == "elgamal":
+            raise ValueError("he_backend 'elgamal' does not support --dp")
         if backend in ("concrete_tfhe", "concrete"):
             return "he_concrete_tfhe_zkp_dp"
         return "he_tenseal_zkp_dp"
     if args.he and args.zkp:
         # Hybrid FHE + ZKP mode
         backend = (args.he_backend or "tenseal").lower()
+        if backend == "elgamal":
+            return "he_elgamal_zkp"
         if backend in ("concrete_tfhe", "concrete"):
             return "he_concrete_tfhe_zkp"
         return "he_tenseal_zkp"
@@ -158,7 +168,7 @@ def main() -> None:
     from fl import FLConfig
     from fl.runner import run_mode
 
-    mode_name = _resolve_mode(args)
+    mode_name = args.privacy_mode or _resolve_mode(args)
 
     config = FLConfig(
         dataset=args.dataset,

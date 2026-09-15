@@ -52,15 +52,21 @@ def _build_parser() -> argparse.ArgumentParser:
     # Privacy-mode flags (legacy API)
     srv.add_argument("--he", action="store_true", default=False)
     srv.add_argument("--he_backend", type=str, default="tenseal")
-    srv.add_argument("--path_keys", type=str, default="keys/he_tenseal/secret_key.pkl")
+    srv.add_argument("--path_keys", type=str, default="keys/he_tenseal/secret_context.bin")
     srv.add_argument(
-        "--path_public_key", type=str, default="keys/he_tenseal/public_key.pkl"
+        "--path_public_key", type=str, default="keys/he_tenseal/public_context.bin"
     )
     srv.add_argument("--zkp", action="store_true", default=False)
-    srv.add_argument("--zkp_backend", type=str, default="pedersen")
-    srv.add_argument("--zkp_params", type=str, default="keys/zkp/zkp_params.pkl")
+    srv.add_argument("--zkp_backend", type=str, default="gnark")
+    srv.add_argument(
+        "--privacy_mode",
+        type=str,
+        default=None,
+        help="Registered privacy mode name; overrides the --he/--zkp/--dp flag combination.",
+    )
+    srv.add_argument("--zkp_params", type=str, default="keys/zkp/zkp_params.json")
     srv.add_argument("--dp", action="store_true", default=False)
-    srv.add_argument("--dp_params", type=str, default="keys/dp/dp_params.pkl")
+    srv.add_argument("--dp_params", type=str, default="keys/dp/dp_params.json")
     srv.add_argument(
         "--dp_epsilon",
         type=float,
@@ -104,12 +110,16 @@ def _resolve_mode(args) -> str:
     if args.he and args.zkp and args.dp:
         # Triple combination: FHE + ZKP + DP
         backend = (args.he_backend or "tenseal").lower()
+        if backend == "elgamal":
+            raise ValueError("he_backend 'elgamal' does not support --dp")
         if backend in ("concrete_tfhe", "concrete"):
             return "he_concrete_tfhe_zkp_dp"
         return "he_tenseal_zkp_dp"
     if args.he and args.zkp:
         # Hybrid FHE + ZKP mode
         backend = (args.he_backend or "tenseal").lower()
+        if backend == "elgamal":
+            return "he_elgamal_zkp"
         if backend in ("concrete_tfhe", "concrete"):
             return "he_concrete_tfhe_zkp"
         return "he_tenseal_zkp"
@@ -162,7 +172,7 @@ def main() -> None:
     from fl.core.benchmark import init_benchmark
     import flwr as fl
 
-    mode_name = _resolve_mode(args)
+    mode_name = args.privacy_mode or _resolve_mode(args)
 
     # Determine results dir from model_save path, fallback to --save_results
     model_save = args.model_save or "./model.pth"
@@ -205,20 +215,31 @@ def main() -> None:
     # Load test data for server-side evaluation
     Loader = get_dataset_loader(config.dataset)
     config.num_classes = Loader.get_spec().num_classes
-    _, _, testloader = Loader().load(config)
+    # Clients partition the same data with the same seed; the largest shard's
+    # batch count sizes the ZKP update-norm bound (fl/core/update_bound.py).
+    trainloaders, _, testloader = Loader().load(config)
 
     mode = get_privacy_mode(mode_name)
     benchmark = (
-        init_benchmark(mode_name, config.num_clients, config.num_rounds)
+        init_benchmark(
+            mode_name,
+            config.num_clients,
+            config.num_rounds,
+            transport="network",
+            zkp_backend=config.zkp_backend if "zkp" in mode_name else None,
+        )
         if args.benchmark
         else None
     )
-    strategy = make_strategy(config, mode, testloader, benchmark=benchmark)
+    strategy = make_strategy(
+        config, mode, testloader, benchmark=benchmark, client_batches=max(len(t) for t in trainloaders)
+    )
 
     print(f"Starting server [{mode_name}] at {server_address}")
     fl.server.start_server(
         server_address=server_address,
-        config=fl.server.ServerConfig(num_rounds=config.num_rounds),
+        # Commit–challenge modes take two Flower rounds per federated round.
+        config=fl.server.ServerConfig(num_rounds=config.num_rounds * mode.rounds_per_fl_round),
         strategy=strategy,
         grpc_max_message_length=grpc_max,
     )

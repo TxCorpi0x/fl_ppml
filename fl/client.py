@@ -131,6 +131,9 @@ class FlowerClient(fl.client.NumPyClient):
         3. Return updated parameters (with encryption if needed) + metrics.
         """
         server_round = config["server_round"]
+        self.mode.on_fit_config(self.crypto_ctx, config)
+        if not self.mode.trains_this_round(self.crypto_ctx):
+            return self._respond_without_training()
         local_epochs = int(config["local_epochs"])
         lr = float(config["learning_rate"])
         print(
@@ -316,6 +319,17 @@ class FlowerClient(fl.client.NumPyClient):
 
     # ── Internal helpers ──────────────────────────────────────────────────────
 
+    def _respond_without_training(self) -> Tuple[List[np.ndarray], int, Dict]:
+        """Challenge rounds: prove over the committed update; no download, no training."""
+        params = self.mode.send_parameters(
+            self.net,
+            self.crypto_ctx,
+            sim_mode=self.config.sim_mode,
+            benchmark=self.benchmark,
+            encrypt_layers=self.config.encrypt_layer_list,
+        )
+        return params, len(self.trainloader), self.mode.post_fit_metrics(self.crypto_ctx, self.benchmark)
+
     def _build_fit_metrics(self) -> Dict:
         """Collect fit-phase metrics from benchmark + mode plugin."""
         metrics: Dict = {}
@@ -395,11 +409,17 @@ def make_client(
 
     # Auto-select model architecture from batch shape
     sample_batch = next(iter(trainloader))
+    # Seeded as in fl.server.make_strategy: every client and the server build
+    # the same initial model. HE modes take their initial model from one client,
+    # so an unseeded client model made those runs start from a different model
+    # each time.
+    torch.manual_seed(config.seed)
     net = get_model_for_batch(sample_batch, config.num_classes).to(device)
 
     # Load existing checkpoint if present
     if os.path.exists(config.model_save):
-        checkpoint = torch.load(config.model_save, map_location=device)
+        # weights_only: a checkpoint is tensors, never arbitrary pickled objects.
+        checkpoint = torch.load(config.model_save, map_location=device, weights_only=True)
         net.load_state_dict(checkpoint.get("model_state_dict", checkpoint))
         print(f"[Client {cid}] Loaded checkpoint from {config.model_save}")
 

@@ -50,15 +50,21 @@ def _build_parser() -> argparse.ArgumentParser:
     # Privacy-mode flags (legacy API)
     cli.add_argument("--he", action="store_true", default=False)
     cli.add_argument("--he_backend", type=str, default="tenseal")
-    cli.add_argument("--path_keys", type=str, default="keys/he_tenseal/secret_key.pkl")
+    cli.add_argument("--path_keys", type=str, default="keys/he_tenseal/secret_context.bin")
     cli.add_argument(
-        "--path_public_key", type=str, default="keys/he_tenseal/public_key.pkl"
+        "--path_public_key", type=str, default="keys/he_tenseal/public_context.bin"
     )
     cli.add_argument("--zkp", action="store_true", default=False)
-    cli.add_argument("--zkp_backend", type=str, default="pedersen")
-    cli.add_argument("--zkp_params", type=str, default="keys/zkp/zkp_params.pkl")
+    cli.add_argument("--zkp_backend", type=str, default="gnark")
+    cli.add_argument(
+        "--privacy_mode",
+        type=str,
+        default=None,
+        help="Registered privacy mode name; overrides the --he/--zkp/--dp flag combination.",
+    )
+    cli.add_argument("--zkp_params", type=str, default="keys/zkp/zkp_params.json")
     cli.add_argument("--dp", action="store_true", default=False)
-    cli.add_argument("--dp_params", type=str, default="keys/dp/dp_params.pkl")
+    cli.add_argument("--dp_params", type=str, default="keys/dp/dp_params.json")
     cli.add_argument(
         "--dp_epsilon",
         type=float,
@@ -93,12 +99,16 @@ def _resolve_mode(args) -> str:
     if args.he and args.zkp and args.dp:
         # Triple combination: FHE + ZKP + DP
         backend = (args.he_backend or "tenseal").lower()
+        if backend == "elgamal":
+            raise ValueError("he_backend 'elgamal' does not support --dp")
         if backend in ("concrete_tfhe", "concrete"):
             return "he_concrete_tfhe_zkp_dp"
         return "he_tenseal_zkp_dp"
     if args.he and args.zkp:
         # Hybrid FHE + ZKP mode
         backend = (args.he_backend or "tenseal").lower()
+        if backend == "elgamal":
+            return "he_elgamal_zkp"
         if backend in ("concrete_tfhe", "concrete"):
             return "he_concrete_tfhe_zkp"
         return "he_tenseal_zkp"
@@ -147,7 +157,7 @@ def main() -> None:
     from fl.core.benchmark import init_benchmark
     import flwr as fl
 
-    mode_name = _resolve_mode(args)
+    mode_name = args.privacy_mode or _resolve_mode(args)
 
     save_dir = args.save_results or "./results/"
 

@@ -53,11 +53,15 @@ class FLConfig:
     privacy_mode: str = "baseline"
 
     # ── TenSEAL HE params ─────────────────────────────────────────────────────
-    he_tenseal_secret_path: str = "keys/he_tenseal/secret_key.pkl"
-    he_tenseal_public_path: str = "keys/he_tenseal/public_key.pkl"
+    he_tenseal_secret_path: str = "keys/he_tenseal/secret_context.bin"
+    he_tenseal_public_path: str = "keys/he_tenseal/public_context.bin"
     he_poly_modulus: int = 8192
     he_coeff_mod_bits: List[int] = field(default_factory=lambda: [60, 40, 40, 60])
     he_scale: int = 40  # global_scale = 2**he_scale
+
+    # ── Verifiable ElGamal HE params (he_elgamal_zkp) ─────────────────────────
+    he_elgamal_secret_path: str = "keys/he_elgamal/secret_key.json"
+    he_elgamal_public_path: str = "keys/he_elgamal/public_key.json"
 
     # ── Concrete TFHE params ──────────────────────────────────────────────────
     he_tfhe_bit_width: int = 14
@@ -65,11 +69,11 @@ class FLConfig:
 
     # ── ZKP params ────────────────────────────────────────────────────────────
     zkp_backend: str = "gnark"  # gnark | pedersen
-    zkp_params_path: str = "keys/zkp/zkp_params.pkl"
+    zkp_params_path: str = "keys/zkp/zkp_params.json"
     zkp_gnark_host: str = "localhost:9000"
 
     # ── DP params ─────────────────────────────────────────────────────────────
-    dp_params_path: str = "keys/dp/dp_params.pkl"
+    dp_params_path: str = "keys/dp/dp_params.json"
     dp_epsilon: float = 10.0
     dp_delta: float = 1e-5
     dp_max_grad_norm: float = 1.0
@@ -85,9 +89,11 @@ class FLConfig:
     encrypt_layers: str = "ALL"
 
     # ── Simulation flag ───────────────────────────────────────────────────────
-    # True  → measure crypto cost but transport plain numpy (safe for in-process FL)
-    # False → encrypt/decrypt real tensors end-to-end
-    sim_mode: bool = True
+    # False → encrypt/decrypt real tensors end-to-end (default)
+    # True  → in-process simulation: HE modes measure crypto cost but transport
+    #         plain numpy, so their results say nothing about encrypted transport.
+    #         Only simulation entry points (simulation.py, fl.runner) set it.
+    sim_mode: bool = False
 
     # ── Blockchain ledger ─────────────────────────────────────────────────────
     # backend: "mock" (in-process, zero deps) | "web3" (requires web3.py +

@@ -128,14 +128,14 @@ class ModeConfig:
             return None
         # ZKP pedersen: skip check when gnark backend is active
         if self.internal_mode == "zkp":
-            zkp_backend = os.environ.get("FL_ZKP_BACKEND", "pedersen").lower()
+            zkp_backend = os.environ.get("FL_ZKP_BACKEND", "gnark").lower()
             if zkp_backend == "gnark":
                 return None  # gnark doesn't need a pre-generated params file
         if not os.path.exists(self.requires_key):
             cmd_hint = {
-                "keys/he_tenseal/secret_key.pkl": "python -m fl.keys generate he_tenseal",
-                "keys/zkp/zkp_params.pkl": "python -m fl.keys generate zkp",
-                "keys/dp/dp_params.pkl": "python -m fl.keys generate dp",
+                "keys/he_tenseal/secret_context.bin": "python -m fl.keys generate he_tenseal",
+                "keys/zkp/zkp_params.json": "python -m fl.keys generate zkp",
+                "keys/dp/dp_params.json": "python -m fl.keys generate dp",
             }.get(self.requires_key, f"python -m fl.keys generate <type>")
             return f"Missing prerequisite: {self.requires_key}\n" f"  Run: {cmd_hint}"
         return None
@@ -155,7 +155,7 @@ MODES: Dict[str, ModeConfig] = {
         he_backend="tenseal",
         color="#e74c3c",
         timeout_s=3600,
-        requires_key="keys/he_tenseal/secret_key.pkl",
+        requires_key="keys/he_tenseal/secret_context.bin",
         display_name="HE-TenSEAL",
     ),
     # Legacy HE-Concrete mode removed; use he_concrete_tfhe instead.
@@ -172,7 +172,7 @@ MODES: Dict[str, ModeConfig] = {
         he_backend=None,
         color="#3498db",
         timeout_s=3600,
-        requires_key="keys/zkp/zkp_params.pkl",
+        requires_key="keys/zkp/zkp_params.json",
         display_name="ZKP",
     ),
     "zkp_sampled": ModeConfig(
@@ -180,7 +180,7 @@ MODES: Dict[str, ModeConfig] = {
         he_backend=None,
         color="#2c7fb8",
         timeout_s=3600,
-        requires_key="keys/zkp/zkp_params.pkl",
+        requires_key="keys/zkp/zkp_params.json",
         display_name="ZKP (sampled)",
     ),
     "dp": ModeConfig(
@@ -188,7 +188,7 @@ MODES: Dict[str, ModeConfig] = {
         he_backend=None,
         color="#f39c12",
         timeout_s=600,
-        requires_key="keys/dp/dp_params.pkl",
+        requires_key="keys/dp/dp_params.json",
         display_name="DP",
     ),
     # ── Hybrid FHE + ZKP modes ─────────────────────────────────────────────
@@ -200,8 +200,8 @@ MODES: Dict[str, ModeConfig] = {
         he_backend="tenseal",
         color="#c0392b",
         timeout_s=7200,
-        requires_key="keys/he_tenseal/secret_key.pkl",
-        display_name="HE-TenSEAL + ZKP",
+        requires_key="keys/he_tenseal/secret_context.bin",
+        display_name="HE-TenSEAL + ZKP (unbound)",
     ),
     "he_concrete_tfhe_zkp": ModeConfig(
         internal_mode="he_zkp",
@@ -209,7 +209,27 @@ MODES: Dict[str, ModeConfig] = {
         color="#6c3483",
         timeout_s=7200,
         requires_key=None,  # Concrete TFHE generates keys per-client at runtime
-        display_name="HE-TFHE + ZKP",
+        display_name="HE-TFHE + ZKP (unbound)",
+    ),
+    # Verifiable ElGamal: proofs are bound to the aggregated ciphertexts
+    # (docs/ZKP.md, section 6.3).
+    "he_elgamal_zkp": ModeConfig(
+        internal_mode="he_zkp",
+        he_backend="elgamal",
+        color="#16a085",
+        timeout_s=14400,
+        requires_key="keys/he_elgamal/secret_key.json",
+        display_name="HE-ElGamal + ZKP (bound)",
+    ),
+    # Commit–challenge coordinate sampling over committed ElGamal ciphertexts
+    # (docs/ZKP.md, section 6.4). Two Flower rounds per federated round.
+    "he_elgamal_zkp_sampled": ModeConfig(
+        internal_mode="he_zkp",
+        he_backend="elgamal",
+        color="#1abc9c",
+        timeout_s=14400,
+        requires_key="keys/he_elgamal/secret_key.json",
+        display_name="HE-ElGamal + sampled ZKP (commit-challenge)",
     ),
     # ── Triple: HE + ZKP + DP  ─────────────────────────────────────────────
     # internal_mode="he_zkp_dp" → _build_mode_flags emits --he --zkp --dp.
@@ -219,8 +239,8 @@ MODES: Dict[str, ModeConfig] = {
         he_backend="tenseal",
         color="#922b21",
         timeout_s=7200,
-        requires_key="keys/he_tenseal/secret_key.pkl",
-        display_name="HE-TenSEAL + ZKP + DP",
+        requires_key="keys/he_tenseal/secret_context.bin",
+        display_name="HE-TenSEAL + ZKP (unbound) + DP",
     ),
     "he_concrete_tfhe_zkp_dp": ModeConfig(
         internal_mode="he_zkp_dp",
@@ -228,6 +248,6 @@ MODES: Dict[str, ModeConfig] = {
         color="#4a235a",
         timeout_s=7200,
         requires_key=None,  # Concrete TFHE generates keys per-client at runtime
-        display_name="HE-TFHE + ZKP + DP",
+        display_name="HE-TFHE + ZKP (unbound) + DP",
     ),
 }

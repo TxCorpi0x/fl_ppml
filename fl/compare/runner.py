@@ -15,6 +15,12 @@ from fl.compare.experiment import run_experiment
 from fl.compare.plots import create_plots
 from fl.compare.registry import DATASETS, MODES, DatasetConfig, ModeConfig
 from fl.compare.report import print_summary
+from fl.compare.validation import (
+    ZKP_INTERNAL_MODES,
+    load_ledger_entries,
+    sampled_coverage_warning,
+    validate_run,
+)
 
 
 @dataclass
@@ -108,6 +114,7 @@ def run_comparison(
     chain_backend: str = "mock",
     chain_ledger_dir: Optional[str] = None,
     dirichlet_alpha: Optional[float] = None,
+    validate_zkp: bool = True,
     **extra_args,
 ) -> List[Dict]:
     """Run all requested privacy modes and return results.
@@ -130,6 +137,11 @@ def run_comparison(
         Root output directory; each mode creates a sub-directory here.
     use_simulation:
         ``False`` (default) → real gRPC server + clients; ``True`` → Flower simulation subprocess.
+    validate_zkp:
+        ``True`` (default) → every ZKP-family mode must show, in its chain
+        ledger, proofs from every aggregated client in every round; any
+        failure marks that result unsuccessful and raises after the report is
+        written. See fl/compare/validation.py for what is not checked.
     **extra_args:
         Forwarded verbatim to the experiment subprocess.
 
@@ -158,10 +170,17 @@ def run_comparison(
         )
     )
     _validate_modes(cfg.modes)
+    # main_server.py requires min_fit_clients=2 and min_avail_clients=2, which
+    # the harness does not forward; fewer clients would wait until timeout.
+    if cfg.num_clients < 2:
+        raise ValueError(f"num_clients must be at least 2, got {cfg.num_clients}")
+    if cfg.num_rounds < 1:
+        raise ValueError(f"num_rounds must be at least 1, got {cfg.num_rounds}")
     _warn_on_heavy_image_zkp(cfg.dataset, cfg.modes)
 
     # ── prerequisites check ───────────────────────────────────────────────
     runnable: List[str] = []
+    skipped: List[Dict] = []
     for mode_key in cfg.modes:
         mode_cfg = MODES[mode_key]
         err = mode_cfg.check_prerequisites()
@@ -169,6 +188,8 @@ def run_comparison(
             runnable.append(mode_key)
         else:
             print(f"[WARN]  Skipping '{mode_key}': {err}")
+            # Requested but not run: recorded as a failed result, not silently absent.
+            skipped.append({"mode": mode_key, "success": False, "skipped": err, "benchmark": None})
     if not runnable:
         raise RuntimeError("No modes can run (prerequisites missing for all).")
 
@@ -198,7 +219,7 @@ def run_comparison(
         os.makedirs(ledger_dir, exist_ok=True)
 
     # ── run each mode ─────────────────────────────────────────────────────
-    results: List[Dict] = []
+    results: List[Dict] = list(skipped)
     for mode_key in runnable:
         mode_cfg: ModeConfig = MODES[mode_key]
         # Build per-mode args so each mode gets its own ledger file.
@@ -217,10 +238,31 @@ def run_comparison(
         )
         if cfg.chain_backend != "none":
             result["chain_ledger_path"] = mode_base_args["chain_ledger_path"]
+        if validate_zkp and mode_cfg.internal_mode in ZKP_INTERNAL_MODES and result.get("benchmark"):
+            report = validate_run(
+                load_ledger_entries(result.get("chain_ledger_path")),
+                result["benchmark"].get("round_outcomes"),
+                expected_rounds=cfg.num_rounds,
+            )
+            result["zkp_validation"] = report
+            if not report["ok"]:
+                result["success"] = False
+                print(f"[ZKP-VALIDATION] [FAIL] {mode_key}:")
+                for err in report["errors"]:
+                    print(f"    {err}")
         results.append(result)
 
     # ── post-processing ───────────────────────────────────────────────────
     add_diagnostics(results)
+
+    by_mode = {r.get("mode"): r for r in results}
+    sampled_warning = sampled_coverage_warning(
+        (by_mode.get("zkp") or {}).get("zkp_validation"),
+        (by_mode.get("zkp_sampled") or {}).get("zkp_validation"),
+    )
+    if sampled_warning:
+        by_mode["zkp_sampled"]["diagnostics"].append(sampled_warning)
+        print(f"[ZKP-VALIDATION] [WARN] {sampled_warning}")
 
     # Promote upload_size_bytes to top-level for easy notebook access.
     for r in results:
@@ -256,6 +298,22 @@ def run_comparison(
     # ── blockchain ledger merge + summary ──────────────────────────────────
     if cfg.chain_backend != "none":
         _merge_chain_ledgers(results, ledger_dir, run_dir)
+
+    failed = {}
+    for r in results:
+        if r.get("success"):
+            continue
+        if r.get("skipped"):
+            failed[r["mode"]] = "skipped: prerequisites missing"
+        elif not (r.get("zkp_validation") or {}).get("ok", True):
+            failed[r["mode"]] = "ZKP validation failed"
+        else:
+            failed[r["mode"]] = r.get("error") or "run failed"
+    if failed:
+        raise RuntimeError(
+            f"{len(failed)} mode(s) did not produce valid results: {failed}; see {report_path}. "
+            "These runs are not valid evidence."
+        )
 
     return results
 
@@ -360,11 +418,19 @@ def _merge_into_dataset_report(
                 f"[WARN]  Could not read existing dataset report ({exc}); it will be overwritten."
             )
 
-    # Overlay new results
+    # Overlay new results. Failed or skipped modes never replace a stored
+    # entry: that would swap valid evidence for a failure record.
     for r in new_results:
         mode = r.get("mode")
-        if mode:
-            existing[mode] = r
+        if not (mode and r.get("success")):
+            continue
+        # A simulated run (HE transports plaintext) never replaces a networked one.
+        new_transport = (r.get("benchmark") or {}).get("transport")
+        old_transport = ((existing.get(mode) or {}).get("benchmark") or {}).get("transport", "network")
+        if mode in existing and new_transport == "simulated" and old_transport != "simulated":
+            print(f"[WARN]  {mode}: simulated result not merged over a networked result in the dataset report")
+            continue
+        existing[mode] = r
 
     merged = list(existing.values())
     with open(dataset_report_path, "w") as f:

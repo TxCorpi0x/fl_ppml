@@ -329,61 +329,54 @@ def test_model_commit_hashes_only_admitted_clients():
     assert chain.events == [("ModelCommit", 2, 1)]
 
 
-def test_first_round_samples_every_client_that_connects_while_waiting():
-    """A client still starting when round 1 is configured must not be left out of it."""
+class _Grid:
+    """Node ids a SuperLink reports; the count changes between calls as nodes connect."""
+
+    def __init__(self, *counts):
+        self.counts = list(counts)
+
+    def get_node_ids(self):
+        count = self.counts.pop(0) if len(self.counts) > 1 else self.counts[0]
+        return list(range(1, count + 1))
+
+
+def _sampling_strategy():
     from fl.server import FedPrivate
 
-    class _Manager:
-        available = 2
-
-        def num_available(self):
-            return self.available
-
-        def wait_for(self, num_clients, timeout=86400):
-            self.available = max(self.available, num_clients)  # the third client connects
-            return True
-
-        def sample(self, num_clients, min_num_clients):
-            return [NS(cid=str(i)) for i in range(num_clients)]
-
-    s = FedPrivate.__new__(FedPrivate)
-    s.fraction_fit, s.min_fit_clients, s.min_available_clients = 1.0, 2, 3
-    s.config = NS(local_epochs=1, learning_rate=0.001, batch_size=16)
-    s.mode = NS(fit_config=lambda r: {})
-
-    assert len(s.configure_fit(1, None, _Manager())) == 3
-
-
-@pytest.mark.parametrize("phase", ["fit", "evaluate"])
-def test_server_stops_instead_of_waiting_forever_for_departed_clients(monkeypatch, phase):
-    """After every client exited, the server blocked in Flower's 24-hour wait."""
-    from fl.server import FedPrivate
-
-    waited = {}
-
-    class _Gone:
-        def num_available(self):
-            return 0
-
-        def wait_for(self, num_clients, timeout=86400):
-            waited["timeout"] = timeout
-            return False
-
-        def sample(self, num_clients, min_num_clients):
-            pytest.fail("sampled clients that never arrived")
-
-    monkeypatch.setenv("FL_CLIENT_WAIT_TIMEOUT", "5")
     s = FedPrivate.__new__(FedPrivate)
     s.fraction_fit = s.fraction_evaluate = 1.0
     s.min_fit_clients = s.min_evaluate_clients = 2
     s.min_available_clients = 3
     s.config = NS(local_epochs=1, learning_rate=0.001, batch_size=16)
     s.mode = NS(fit_config=lambda r: {}, evaluates_this_round=lambda r: True)
+    s._sampled = {}
+    return s
 
-    configure = s.configure_fit if phase == "fit" else s.configure_evaluate
-    with pytest.raises(RuntimeError, match="only 0 of 3 required clients"):
-        configure(1, None, _Gone())
-    assert waited["timeout"] == 5
+
+def test_first_round_samples_every_client_that_connects_while_waiting():
+    """A client still starting when round 1 is configured must not be left out of it."""
+    from flwr.app import ArrayRecord, ConfigRecord
+
+    messages = _sampling_strategy().configure_train(1, ArrayRecord(), ConfigRecord(), _Grid(2, 3))
+
+    assert sorted(m.metadata.dst_node_id for m in messages) == [1, 2, 3]
+
+
+@pytest.mark.parametrize("phase", ["fit", "evaluate"])
+def test_server_stops_instead_of_waiting_forever_for_departed_clients(monkeypatch, phase):
+    """After every client exited, the server blocked in an unbounded wait."""
+    import time
+
+    from flwr.app import ArrayRecord, ConfigRecord
+
+    monkeypatch.setenv("FL_CLIENT_WAIT_TIMEOUT", "1")
+    s = _sampling_strategy()
+    configure = s.configure_train if phase == "fit" else s.configure_evaluate
+
+    t0 = time.monotonic()
+    with pytest.raises(RuntimeError, match="only 0 of 3 required clients available after 1s"):
+        configure(1, ArrayRecord(), ConfigRecord(), _Grid(0))
+    assert time.monotonic() - t0 < 5
 
 
 def test_ledger_save_failure_raises(tmp_path):
@@ -490,24 +483,23 @@ def test_failed_results_never_replace_stored_dataset_entries(tmp_path):
     assert json.loads((tmp_path / "healthcare" / "comparison_report.json").read_text()) == stored
 
 
-def test_harness_stops_a_server_that_outlives_its_clients():
-    """A stuck server is terminated after the grace period, not after 2.5 hours."""
-    import subprocess
-    import sys
+def test_harness_stops_a_run_that_outlives_its_clients():
+    """A stuck run is stopped after the grace period, not after hours."""
     import time
 
-    from fl.compare.experiment import _wait_for_server
+    from fl.launch import wait_for_run
 
-    stuck = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"], start_new_session=True)
+    stopped = []
     t0 = time.monotonic()
-    reason = _wait_for_server(stuck, t0, server_timeout=0, grace=1)
+    status, reason = wait_for_run(lambda: ("running", ""), lambda: False, lambda: stopped.append(1), timeout=0, grace=1, poll=0.1)
+    assert status == "finished:stopped" and "after every client exited" in reason
+    assert stopped == [1] and time.monotonic() - t0 < 5
 
-    assert "after every client exited" in reason
-    assert stuck.returncode not in (None, 0) and time.monotonic() - t0 < 15
+    status, reason = wait_for_run(lambda: ("running", ""), lambda: True, lambda: stopped.append(2), timeout=0.5, grace=600, poll=0.1)
+    assert status == "finished:stopped" and "timeout" in reason and stopped == [1, 2]
 
-    finished = subprocess.Popen([sys.executable, "-c", "pass"], start_new_session=True)
-    assert _wait_for_server(finished, time.monotonic(), server_timeout=0, grace=30) is None
-    assert finished.returncode == 0
+    done = wait_for_run(lambda: ("finished:completed", ""), lambda: False, lambda: pytest.fail("stopped a finished run"), timeout=0, grace=0, poll=0.1)
+    assert done == ("finished:completed", "")
 
 
 def test_zkp_mode_is_not_run_without_a_healthy_proof_service(tmp_path, monkeypatch):

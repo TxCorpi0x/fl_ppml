@@ -6,49 +6,42 @@ Registered modes
 he_tenseal_zkp       — TenSEAL CKKS encryption + gnark ZKP integrity proofs
 he_concrete_tfhe_zkp — Concrete TFHE encryption + gnark ZKP integrity proofs
 
+SECURITY STATUS — CONFIDENTIALITY ONLY, NO INTEGRITY
+----------------------------------------------------
+The ZKP proof in these modes is NOT bound to the ciphertext the server
+aggregates (docs/ZKP.md, section 6.5). A client can prove an
+honest vector and submit a ciphertext of a poisoned one; this is demonstrated
+by tests/test_zkp_binding_attack.py. The proofs measure prover cost only and
+provide no Byzantine-robustness. Use ``he_elgamal_zkp`` for ciphertext-bound
+proofs.
+
 Architecture
 ------------
-Both modes compose an HE backend (weight *confidentiality*) with ZKP proof
-generation (gradient *integrity*).  They address complementary security goals:
+Both modes compose an HE backend (weight confidentiality) with the `zkp`
+client, whose proof result is not tied to the uploaded ciphertext:
 
   ┌────────────┬──────────────────────────────────────────────┐
   │ Property   │ Mechanism                                    │
   ├────────────┼──────────────────────────────────────────────┤
   │ Privacy    │ FHE  — server never sees plaintext weights   │
-  │ Integrity  │ ZKP  — client proves ‖w‖² ≤ bound & hash    │
+  │ Integrity  │ none — proof is over a client-chosen vector  │
   └────────────┴──────────────────────────────────────────────┘
 
 Client-side flow (per round):
-  1. Generate gnark Groth16 ZKP proofs on *plaintext* weights.
-     Proves: MiMC_hash(w) == committed_hash  AND  Σwᵢ² ≤ bound.
-  2. Encrypt weights with HE (server receives only ciphertexts).
-  3. Send: HE ciphertext parameters + ZKP proof payloads (via metrics).
+  1. Clip the update to the server's bound and prove it with the norm circuit
+     (MiMC hash of the quantized update, Σ Δq² within the declared bound).
+  2. Encrypt the weights with HE (the server receives only ciphertexts).
+  3. Send the HE ciphertexts and the proof payloads (via metrics).
 
 Server-side flow (per round):
-  - Calls ``/verify_light`` on the gnark service for each proof, passing
-    only the committed public inputs (hash_hex, bound_sq, shape) and the
-    proof bytes.  No plaintext weights cross the wire — fully zero-knowledge.
-  - Clients that fail verification are excluded from aggregation.
-  - Aggregates remaining HE ciphertexts homomorphically.
+  - Checks proof coverage against its own model schema, the pinned verifying
+    key and the total bound, then calls ``/verify_light`` with the proofs'
+    public inputs (hash, bound, shape). It cannot recompute the hash, because
+    it never sees the plaintext update.
+  - Clients that fail are excluded; the rest are aggregated homomorphically.
 
-Zero-knowledge server verification
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-The gnark service exposes ``/verify_light``:
-
-    POST /verify_light
-    {
-        "layer_name": "...",
-        "shape":      [d0, d1, ...],   // to derive circuit size n = ∏shape
-        "bound_sq":   "<integer>",     // public SNARK input: Σwᵢ² ≤ bound
-        "hash_hex":   "<hex>",         // public SNARK input: MiMC_hash(w)
-        "proof_b64":  "<base64>"       // Groth16 proof bytes
-    }
-
-The server re-uses the cached verifying key (keyed on circuit size n) and
-verifies the SNARK against the *public* witness only.  Private weights are
-never transmitted — the server simultaneously achieves:
-  [OK] Weight confidentiality (FHE)
-  [OK] Online cryptographic ZKP verification (zero-knowledge)
+Because the hash is supplied by the client, nothing ties the verified vector
+to the aggregated ciphertext (docs/ZKP.md, section 6.5).
 """
 
 from __future__ import annotations
@@ -61,7 +54,16 @@ import numpy as np
 
 from fl.privacy.base import PrivacyMode, _plain_params
 from fl.privacy.registry import register_mode
-from fl.privacy.zkp import ZKPMode
+from fl.privacy.zkp import (
+    ZKPMode,
+    admission_quorum,
+    anchor_data,
+    model_schema,
+    parse_proofs,
+    resolve_backend,
+    round_report,
+    timer,
+)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -100,8 +102,19 @@ class _HeZKPCompositeMode(PrivacyMode):
         return {"he": he_ctx, "zkp": zkp_ctx}
 
     def setup_server_context(self, config) -> Any:
-        # Server only needs the HE context (ZKP server ctx is always None).
+        # The ZKP server context is always None; this sets its update-norm bound.
+        self._zkp_mode.setup_server_context(config)
         return self._he_mode.setup_server_context(config)
+
+    def fit_config(self, server_round: int) -> Dict:
+        return {**self._he_mode.fit_config(server_round), **self._zkp_mode.fit_config(server_round)}
+
+    def on_fit_config(self, context, fit_config: Dict) -> None:
+        self._he_mode.on_fit_config(context["he"], fit_config)
+        self._zkp_mode.on_fit_config(context["zkp"], fit_config)
+
+    def bind_server_model(self, server_context, model) -> None:
+        self._server_schema = model_schema(model)
 
     # ── Server: initial parameter distribution ─────────────────────────────
 
@@ -152,7 +165,9 @@ class _HeZKPCompositeMode(PrivacyMode):
     def receive_parameters(
         self, net, params, context, *, sim_mode, benchmark=None, encrypt_layers=None
     ) -> None:
-        """Decrypt HE-encrypted parameters from server."""
+        """Decrypt HE-encrypted parameters from server; keep them as the update's base."""
+        from fl.privacy.zkp import state_arrays
+
         self._he_mode.receive_parameters(
             net,
             params,
@@ -161,6 +176,8 @@ class _HeZKPCompositeMode(PrivacyMode):
             benchmark=benchmark,
             encrypt_layers=encrypt_layers,
         )
+        if isinstance(context.get("zkp"), dict):
+            context["zkp"]["global"] = state_arrays(net)
 
     # ── Post-fit: attach ZKP proof payloads to fit() response ────────────
 
@@ -181,104 +198,88 @@ class _HeZKPCompositeMode(PrivacyMode):
         self, server_round, results, failures, server_context, config, benchmark=None
     ) -> Optional[Tuple]:
         """
-        1. Parse ZKP proof payloads from each client's fit() metrics.
-        2. Run zero-knowledge verification via ``/verify_light`` — no plaintext
-           weights needed; only the committed public inputs (hash_hex, bound_sq)
-           and the Groth16 proof are sent to the gnark service.
-        3. Exclude any client whose proofs fail (or are absent).
-        4. Delegate encrypted aggregation to the HE backend.
+        1. Check each client's proofs against the server's schema and policy,
+           then verify them with ``/verify_light`` (public inputs only).
+        2. Reject clients whose proofs are absent, malformed, off-policy or
+           invalid; abort the round if the proof service fails.
+        3. Below quorum, leave the global model unchanged.
+        4. Aggregate only admitted clients with the HE backend.
+
+        The proofs are not bound to the ciphertexts (see module docstring), so
+        admission here is not an integrity guarantee.
         """
-        from fl.core.benchmark import BenchmarkTimer
+        from fl.core import zkp_gnark
 
-        backend = os.environ.get("FL_ZKP_BACKEND", config.zkp_backend).lower()
-
-        admitted = []
-        for client_proxy, fit_res in results:
-            metrics = fit_res.metrics or {}
-            proofs_json = metrics.get("zkp_proofs_json", "")
-            try:
-                proofs = json.loads(proofs_json) if proofs_json else None
-            except Exception:
-                proofs = None
-
-            if not proofs:
-                if backend == "gnark":
-                    print(
-                        f"[{self.name.upper()}] Round {server_round}: "
-                        f"client {client_proxy.cid} sent no ZKP proofs — excluded."
-                    )
-                    continue
-                # Non-gnark backends: admit without ZKP check
-                admitted.append((client_proxy, fit_res))
-                continue
-
-            if backend == "gnark":
-                from fl.core.zkp_gnark import verify_gnark_proofs_light
-
-                if benchmark:
-                    with BenchmarkTimer(benchmark, "proof_verification"):
-                        ok, verify_failures = verify_gnark_proofs_light(proofs)
-                else:
-                    ok, verify_failures = verify_gnark_proofs_light(proofs)
-
-                n_proofs = len(proofs)
-                proof_bytes = sum(len(p.get("proof_b64", "")) for p in proofs)
-                if ok:
-                    print(
-                        f"[{self.name.upper()}] Round {server_round}: "
-                        f"client {client_proxy.cid} — {n_proofs} ZKP proof(s) "
-                        f"verified [OK] ({proof_bytes} bytes, zero-knowledge)"
-                    )
-                    admitted.append((client_proxy, fit_res))
-                else:
-                    print(
-                        f"[{self.name.upper()}] Round {server_round}: "
-                        f"client {client_proxy.cid} — ZKP verification FAILED "
-                        f"for layers: {verify_failures} — excluded."
-                    )
-            else:
-                # pedersen: no server-side verify; admit and log
-                n_proofs = len(proofs)
-                print(
-                    f"[{self.name.upper()}] Round {server_round}: "
-                    f"client {client_proxy.cid} — {n_proofs} pedersen commitment(s) "
-                    f"(offline audit only)"
-                )
-                admitted.append((client_proxy, fit_res))
-
-        if not admitted:
-            print(
-                f"[{self.name.upper()}] Round {server_round}: "
-                "all clients excluded — falling back to full result set."
+        self._last_anchor_data = None
+        if resolve_backend(config) != "gnark":
+            self.last_round_report = round_report(
+                server_round, "unverified_stub", [cp.cid for cp, _ in results], {}
             )
-            admitted = list(results)
+            return self._aggregate(server_round, list(results), failures, server_context, config, benchmark)
 
-        # ── Build ZKP anchor data for the chain ledger ────────────────────────
-        _proof_hashes: List[str] = []
-        _client_ids: List[str] = []
+        schema = getattr(self, "_server_schema", None)
+        if schema is None:
+            raise RuntimeError("server schema not bound: make_strategy must call bind_server_model")
+
+        admitted, rejected = [], {}
         try:
-            from fl.chain import hash_proof_payload
+            for client_proxy, fit_res in results:
+                with timer(benchmark, "proof_verification"):
+                    proofs = parse_proofs(fit_res.metrics or {})
+                    reason = (
+                        zkp_gnark.check_proof_policy(
+                            proofs, schema, require_hash=True, total_bound_sq=self._zkp_mode._total_bound_sq(schema)
+                        )
+                        if proofs
+                        else "missing or malformed proofs"
+                    )
+                    if not reason:
+                        ok, failed = zkp_gnark.verify_gnark_proofs_light(proofs)
+                        reason = None if ok else f"proof verification failed for {failed[:5]}"
+                if reason:
+                    rejected[str(client_proxy.cid)] = reason
+                    print(f"[{self.name.upper()}] Round {server_round}: client {client_proxy.cid} REJECTED — {reason}")
+                else:
+                    admitted.append((client_proxy, fit_res, proofs))
+        except zkp_gnark.GnarkServiceError as exc:
+            print(f"[{self.name.upper()}] Round {server_round}: ABORTED — proof service failure, not a client fault: {exc}")
+            self.last_round_report = round_report(server_round, "infrastructure_abort", [], rejected, str(exc))
+            return None, {"round_outcome": "infrastructure_abort"}
 
-            for cp, fit_res in admitted:
-                meta = fit_res.metrics or {}
-                proofs_json = meta.get("zkp_proofs_json", "")
-                proofs = json.loads(proofs_json) if proofs_json else []
-                for p in proofs:
-                    _proof_hashes.append(hash_proof_payload(p))
-                if proofs:
-                    _client_ids.append(str(cp.cid))
-        except Exception as _e:
-            print(f"[{self.name.upper()}] Warning: could not build anchor data: {_e}")
-        self._last_anchor_data = {
-            "round": server_round,
-            "proof_hashes": _proof_hashes,
-            "client_ids": _client_ids,
-        }
+        quorum = admission_quorum(config)
+        if len(admitted) < quorum:
+            print(f"[{self.name.upper()}] Round {server_round}: {len(admitted)} admitted < quorum {quorum} — global model unchanged.")
+            self.last_round_report = round_report(
+                server_round, "no_quorum", [cp.cid for cp, _, _ in admitted], rejected
+            )
+            return None, {"round_outcome": "no_quorum", "admitted": len(admitted), "rejected": len(rejected)}
 
-        # Delegate encrypted aggregation to the HE backend.
-        return self._he_mode.aggregate_fit_override(
+        params, metrics = self._aggregate(
+            server_round, [(cp, fr) for cp, fr, _ in admitted], failures, server_context, config, benchmark
+        )
+        self._last_anchor_data = anchor_data(server_round, [(str(cp.cid), proofs) for cp, _, proofs in admitted])
+        self.last_round_report = round_report(server_round, "aggregated", [cp.cid for cp, _, _ in admitted], rejected)
+        return params, {**metrics, "round_outcome": "aggregated", "admitted": len(admitted), "rejected": len(rejected)}
+
+    def _aggregate(self, server_round, admitted, failures, server_context, config, benchmark) -> Tuple:
+        """Aggregate exactly ``admitted`` with the HE backend, never the full result set."""
+        out = self._he_mode.aggregate_fit_override(
             server_round, admitted, failures, server_context, config, benchmark
         )
+        if out is not None:
+            return out
+        # Simulation: the HE backend transports plaintext and defers to FedAvg.
+        # Average the admitted subset here so rejected clients can't re-enter
+        # through the strategy's FedAvg path.
+        from flwr.common import ndarrays_to_parameters, parameters_to_ndarrays
+        from fl.core.security import aggregate_custom
+
+        plain = self._he_mode.pre_aggregate(admitted, config)
+        with timer(benchmark, "server_aggregate"):
+            aggregated = aggregate_custom(
+                [(parameters_to_ndarrays(fr.parameters), fr.num_examples) for _, fr in plain]
+            )
+        return ndarrays_to_parameters(aggregated), {}
 
     def pre_aggregate(self, results, config) -> List:
         """Delegate to the HE backend's pre_aggregate hook."""

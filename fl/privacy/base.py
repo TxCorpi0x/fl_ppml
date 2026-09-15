@@ -36,6 +36,12 @@ class PrivacyMode(ABC):
                      crypto is measured but plain numpy is transported.
     """
 
+    # Set by aggregate_fit_override when the mode decides which clients are
+    # admitted: {"round", "outcome", "admitted": [cid], "rejected": {cid: reason}}.
+    # outcome is one of "aggregated", "no_quorum", "infrastructure_abort" or
+    # "unverified_stub". The strategy records it and clears it each round.
+    last_round_report: Optional[Dict] = None
+
     # ── Identification ───────────────────────────────────────────────────────
 
     @property
@@ -151,6 +157,39 @@ class PrivacyMode(ABC):
         Default: False (server pushes its own plain initial weights).
         """
         return False
+
+    def bind_server_model(self, server_context: Any, model) -> None:
+        """
+        Give the server context the server's own global model.
+
+        Called once by make_strategy. Modes that must validate uploads against
+        a server-owned schema read it here instead of trusting client metadata.
+        Default: no-op.
+        """
+        return None
+
+    def on_fit_config(self, context: Any, fit_config: Dict) -> None:
+        """
+        Receive the server's fit config (including ``server_round``) at the
+        start of each client fit(), before any parameters are sent.
+        Default: no-op.
+        """
+        return None
+
+    # Flower rounds per federated round. Commit–challenge modes use two.
+    rounds_per_fl_round: int = 1
+
+    def fit_config(self, server_round: int) -> Dict:
+        """Extra server → client fit config for this Flower round. Default: none."""
+        return {}
+
+    def trains_this_round(self, context: Any) -> bool:
+        """False for rounds in which the client only answers a challenge. Default: True."""
+        return True
+
+    def evaluates_this_round(self, server_round: int) -> bool:
+        """False for Flower rounds that don't change the global model. Default: True."""
+        return True
 
     def aggregate_fit_override(
         self,

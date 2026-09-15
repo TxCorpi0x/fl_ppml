@@ -8,32 +8,27 @@ he_concrete_tfhe_zkp_dp — Concrete TFHE + gnark ZKP + DP-SGD
 
 Security architecture
 ---------------------
-Each mechanism addresses a distinct adversarial goal:
-
   ┌────────────────┬──────────────────────────────────────────────────────────┐
   │ Property       │ Mechanism                                                │
   ├────────────────┼──────────────────────────────────────────────────────────┤
   │ Confidentiality│ FHE — server never sees plaintext weights                │
-  │ Integrity      │ ZKP — client proves ‖w‖² ≤ bound & MiMC hash            │
-  │ Privacy        │ DP-SGD — gradient clipping + Gaussian noise (ε-DP)      │
+  │ Integrity      │ none — the proof is not bound to the ciphertext          │
+  │ Privacy        │ DP-SGD — gradient clipping + Gaussian noise (ε-DP)       │
   └────────────────┴──────────────────────────────────────────────────────────┘
 
 Client-side flow per round:
-  1. Local training with DP-SGD (gradient clipping + noise addition).
-     Private training data cannot be reconstructed from shared weights.
-  2. Generate gnark Groth16 ZKP proofs on the DP-noised *plaintext* weights.
-     Proves: MiMC_hash(w) == committed_hash  AND  Σwᵢ² ≤ bound.
+  1. Local training with DP-SGD (per-step gradient clipping + noise).
+  2. Prove the DP-noised update with the norm circuit. These modes enforce no
+     update-norm bound: the proofs aren't bound to the aggregated ciphertext,
+     and DP noise makes honest updates far larger than a non-DP calibration.
   3. Encrypt the DP-noised weights with FHE — server receives only ciphertexts.
 
 Server-side flow per round:
-  - Verifies ZKP proofs (zero-knowledge, using public inputs only).
-  - Excludes clients that fail verification.
-  - Aggregates remaining FHE ciphertexts homomorphically.
-  - Returns encrypted aggregate; clients decrypt locally.
+  - Verifies the proofs against their public inputs and excludes clients whose
+    proofs fail (which says nothing about the ciphertexts they uploaded).
+  - Aggregates the remaining FHE ciphertexts homomorphically.
+  - Returns the encrypted aggregate; clients decrypt locally.
 
-The composition is secure: DP noise is applied first, so ZKP proves
-properties of already-noised weights, and FHE encrypts the noised weights.
-The server never observes plaintext gradients at any stage.
 """
 
 from __future__ import annotations
@@ -64,6 +59,9 @@ class _HeZKPDPCompositeMode(_HeZKPCompositeMode):
 
     def __init__(self):
         super().__init__()
+        # No update bound: these proofs aren't bound to the aggregated ciphertext,
+        # and DP noise makes honest updates far larger than a non-DP calibration.
+        self._zkp_mode = ZKPMode(enforce_update_bound=False)
         self._dp_mode = DifferentialPrivacyMode()
 
     @property
@@ -77,8 +75,9 @@ class _HeZKPDPCompositeMode(_HeZKPCompositeMode):
         return {"he": he_ctx, "zkp": zkp_ctx, "dp": dp_ctx}
 
     def setup_server_context(self, config) -> Any:
-        # Server only needs HE context; ZKP/DP are client-side.
-        return self._he_mode.setup_server_context(config)
+        # Server needs the HE context and the ZKP update-norm bound; DP is client-side.
+        # DP noise enlarges honest updates: calibrate FL_ZKP_MAX_NORM for DP runs.
+        return super().setup_server_context(config)
 
     def post_fit_metrics(self, context, benchmark=None) -> Dict:
         """Return HE + ZKP + DP timing metrics merged together."""

@@ -22,7 +22,6 @@ from __future__ import annotations
 import gc
 import io
 import os
-import pickle
 import struct
 import zlib
 from typing import Any, Dict, List, Optional, Tuple
@@ -145,39 +144,36 @@ class HeTensealMode(PrivacyMode):
 
     def setup_client_context(self, config):
         """Load or create TenSEAL context with the secret key."""
-        import tenseal as ts
         from fl.core.security import make_tenseal_context
+        from fl.keys.he_tenseal import load_client, write_context
 
         secret_path = config.he_tenseal_secret_path
-        os.makedirs(os.path.dirname(secret_path) or ".", exist_ok=True)
-
         if os.path.exists(secret_path):
-            with open(secret_path, "rb") as f:
-                query = pickle.load(f)
-            ctx = ts.context_from(query["contexte"])
+            ctx = load_client(secret_path)
             print(f"[HE-TenSEAL] Client context loaded from {secret_path}")
         else:
             ctx = make_tenseal_context()
-            with open(secret_path, "wb") as f:
-                pickle.dump({"contexte": ctx.serialize(save_secret_key=True)}, f)
+            write_context(secret_path, ctx.serialize(save_secret_key=True))
             print(f"[HE-TenSEAL] New client context created → {secret_path}")
 
         return ctx
 
     def setup_server_context(self, config):
         """Load public TenSEAL context (no secret key) for server-side aggregation."""
-        import tenseal as ts
-        from fl.core.security import read_query
+        from fl.keys.he_tenseal import load_server
 
         public_path = config.he_tenseal_public_path
         if not os.path.exists(public_path):
-            print(
-                "[HE-TenSEAL] No server public key found; running in simulation mode."
+            if config.sim_mode:
+                print("[HE-TenSEAL] No server public key found; simulation mode transports plaintext.")
+                return None
+            # Without a context the server would FedAvg raw ciphertext bytes.
+            raise FileNotFoundError(
+                f"TenSEAL public key not found: {public_path}\n"
+                "Run: python -m fl.keys generate he_tenseal"
             )
-            return None
 
-        _, raw_context = read_query(public_path)
-        ctx = ts.context_from(raw_context)
+        ctx = load_server(public_path)
         print(f"[HE-TenSEAL] Server context loaded from {public_path}")
         return ctx
 
@@ -253,18 +249,15 @@ class HeTensealMode(PrivacyMode):
                 net, [p.astype(np.float32, copy=False) for p in params], None, None
             )
         else:
-            # Reassemble any CCHK-chunked arrays before decryption
+            # Reassemble any CCHK-chunked arrays before decryption. A failure
+            # raises: training on stale local weights while reporting success
+            # would hide it.
             params = _unpack_arrays(list(params))
-            try:
-                if benchmark:
-                    with BenchmarkTimer(benchmark, "decryption"):
-                        set_parameters(net, params, context, None, he_backend="tenseal")
-                else:
+            if benchmark:
+                with BenchmarkTimer(benchmark, "decryption"):
                     set_parameters(net, params, context, None, he_backend="tenseal")
-            except Exception as e:
-                print(
-                    f"[HE-TenSEAL] receive_parameters failed ({e}); keeping local model weights"
-                )
+            else:
+                set_parameters(net, params, context, None, he_backend="tenseal")
 
     def post_fit_metrics(self, context, benchmark=None) -> Dict:
         metrics = {}
@@ -293,8 +286,12 @@ class HeTensealMode(PrivacyMode):
 
         sim_mode = config.sim_mode
 
-        if sim_mode or server_context is None:
-            return None  # fall through to standard FedAvg
+        if sim_mode:
+            return None  # simulation transports plaintext; standard FedAvg
+        if server_context is None:
+            raise RuntimeError(
+                "[HE-TenSEAL] no server context in non-simulation mode; refusing to FedAvg ciphertext bytes"
+            )
 
         print(
             f"[HE-TenSEAL] Round {server_round}: aggregating encrypted parameters from {len(results)} clients…"
@@ -404,19 +401,23 @@ class HeTensealMode(PrivacyMode):
         ``ts.CKKSTensor``; call its ``.serialize()`` to get raw bytes, then
         zlib-compress for transport.
 
-        Only layers listed in *encrypt_layers* (or ``FL_ENCRYPT_LAYERS`` env var)
-        are CKKS-encrypted; remaining layers are sent as plain float32 arrays.
-        Pass ``None`` / unset env var to encrypt everything.
+        Only layers listed in *encrypt_layers* (or an explicitly set
+        ``FL_ENCRYPT_LAYERS`` env var) are CKKS-encrypted; remaining layers are
+        sent as plain float32 arrays. With neither set, every layer is
+        encrypted. (A first-layer default would leave most of the model, and
+        all of a CNN, in plaintext.)
         """
         from fl.core.security import crypte, _make_cvec
 
-        # Resolve which layers to encrypt (mirrors old behaviour driven by env var)
         if encrypt_layers is None:
-            env_val = os.environ.get(
-                "FL_ENCRYPT_LAYERS", "model.0.weight,model.0.bias"
-            ).strip()
+            env_val = os.environ.get("FL_ENCRYPT_LAYERS", "ALL").strip()
             if env_val and env_val.upper() != "ALL":
                 encrypt_layers = [s.strip() for s in env_val.split(",") if s.strip()]
+                missing = sorted(set(encrypt_layers) - set(net.state_dict()))
+                if missing:
+                    raise ValueError(
+                        f"FL_ENCRYPT_LAYERS names layers not in the model: {missing}"
+                    )
 
         layers = crypte(net.state_dict(), context, encrypt_layers)
         result = []
@@ -487,8 +488,12 @@ def _decompress_cte2_results(results):
                     arr = np.load(io.BytesIO(zlib.decompress(raw)), allow_pickle=False)
                     fixed.append(arr.astype(np.float32, copy=False))
                     continue
-                except Exception:
-                    pass
+                except Exception as exc:
+                    # FedAvg over raw bytes is never meaningful.
+                    raise ValueError(
+                        f"client {getattr(client, 'cid', '?')}: uint8 parameter is not a decodable "
+                        "plaintext envelope; refusing to average ciphertext or corrupt bytes"
+                    ) from exc
             fixed.append(p)
         fit_res.parameters = ndarrays_to_parameters(fixed)
         decompressed.append((client, fit_res))

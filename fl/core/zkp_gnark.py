@@ -2,6 +2,7 @@ import base64
 import concurrent.futures
 import gc
 import logging
+import math
 import os
 import time
 from typing import Dict, List, Optional, Tuple
@@ -17,7 +18,7 @@ from .zkp_utils import to_numpy, post_json
 DEFAULT_PROVER_URL = os.environ.get("FL_ZKP_PROVER_URL", "http://127.0.0.1:9000")
 DEFAULT_VERIFIER_URL = os.environ.get("FL_ZKP_VERIFIER_URL", "http://127.0.0.1:9001")
 DEFAULT_SCALE = float(os.environ.get("FL_ZKP_SCALE", "1000000"))
-DEFAULT_MAX_NORM = float(os.environ.get("FL_ZKP_MAX_NORM", "100.0"))
+# The update-norm bound comes from fl.core.update_bound (server policy), not from here.
 # Increased from 120 to 600: first chunk of a new size triggers gnark circuit
 # compilation + groth16 setup which can take several minutes for large layers.
 DEFAULT_TIMEOUT = float(os.environ.get("FL_ZKP_TIMEOUT", "600"))
@@ -173,7 +174,20 @@ def _http_timeout(read_timeout_s: float):
 
 
 def _quantize_weights(weights: np.ndarray, scale: float) -> np.ndarray:
+    if np.issubdtype(weights.dtype, np.integer):
+        return weights.astype(np.int64)  # already quantized (an update Δq)
     return np.round(weights.astype(np.float64, copy=False) * scale).astype(np.int64)
+
+
+def quantize(values, scale: Optional[float] = None) -> np.ndarray:
+    """Float parameters → int64 at the proof scale. Clients and server must use exactly this."""
+    return _quantize_weights(np.asarray(values), DEFAULT_SCALE if scale is None else scale)
+
+
+def energy(q: np.ndarray) -> int:
+    """Σq² as an exact Python integer."""
+    flat = np.asarray(q, dtype=object).reshape(-1)
+    return int(np.dot(flat, flat))
 
 
 def _encode_weights(weights: np.ndarray) -> Tuple[str, List[int]]:
@@ -213,11 +227,16 @@ def generate_gnark_proofs(
     layers: Optional[List[str]] = None,
     service_url: Optional[str] = None,
     scale: Optional[float] = None,
-    max_norm: Optional[float] = None,
+    total_bound_sq: Optional[int] = None,
     timeout: Optional[float] = None,
 ) -> Tuple[List[Dict], int]:
     """
     Generate per-layer proofs using the gnark service.
+
+    Each proof declares its own bound, the squared norm of the (quantized)
+    values it covers. With ``total_bound_sq`` the declared bounds must sum to at
+    most that total, which is what the server enforces (check_proof_policy).
+    Integer arrays are proved as given; float arrays are quantized at ``scale``.
 
     Returns:
         proofs: list of proof payloads (JSON-serializable)
@@ -225,7 +244,6 @@ def generate_gnark_proofs(
     """
     service_url = service_url or DEFAULT_PROVER_URL
     scale = scale if scale is not None else DEFAULT_SCALE
-    max_norm = max_norm if max_norm is not None else DEFAULT_MAX_NORM
     timeout = timeout if timeout is not None else DEFAULT_PROVE_TIMEOUT
 
     layer_names = list(state_dict.keys())
@@ -235,14 +253,12 @@ def generate_gnark_proofs(
     if layers is not None:
         protected_layers = [name for name in protected_layers if name in layers]
 
-    bound_sq = int((max_norm * scale) ** 2)
-
     proofs: List[Dict] = []
     total_bytes = 0
 
     # Prepare a worker that posts a single layer proof and returns payload + size
     def _prove_one(item):
-        name, tensor = item
+        name, tensor, bound_sq = item
         payload = None
         data = None
         response = None
@@ -323,6 +339,10 @@ def generate_gnark_proofs(
         items.extend(_expand_to_chunks(name, state_dict[name], max_n))
     if not items:
         return proofs, total_bytes
+    items = [(name, q, max(1, energy(q))) for name, q in ((n, _quantize_weights(to_numpy(t), scale)) for n, t in items)]
+    declared = sum(bound for _, _, bound in items)
+    if total_bound_sq is not None and declared > total_bound_sq:
+        raise RuntimeError(f"update energy {declared} exceeds the server's bound {total_bound_sq}")
 
     # Parallelism configuration
     max_workers = max(1, DEFAULT_PARALLELISM)
@@ -437,11 +457,16 @@ def expected_proof_layout(
     return layout
 
 
-def policy_bound_sq(scale: Optional[float] = None, max_norm: Optional[float] = None) -> int:
-    """The server's bound on Σq², using the same formula as generate_gnark_proofs."""
+def policy_bound_sq(max_update_norm: float, n: int, scale: Optional[float] = None) -> int:
+    """The server's bound on Σ Δq² over n proven coordinates.
+
+    ⌈B·scale + √n⌉²: Δq = round(w·scale) − round(g·scale) is within 1 of
+    scale·Δ per coordinate, so any update with ‖Δ‖ ≤ B fits (triangle inequality).
+    """
     scale = DEFAULT_SCALE if scale is None else scale
-    max_norm = DEFAULT_MAX_NORM if max_norm is None else max_norm
-    return int((max_norm * scale) ** 2)
+    if not max_update_norm > 0:
+        raise ValueError(f"update-norm bound must be positive, got {max_update_norm}")
+    return math.ceil(max_update_norm * scale + math.sqrt(n)) ** 2
 
 
 def check_proof_policy(
@@ -449,13 +474,14 @@ def check_proof_policy(
     schema: List[Tuple[str, Tuple[int, ...]]],
     *,
     require_hash: bool,
+    total_bound_sq: int,
     scale: Optional[float] = None,
-    max_norm: Optional[float] = None,
 ) -> Optional[str]:
     """Return a rejection reason if a proof set doesn't match server policy, else None.
 
-    Checks exact coverage of the server's model, per-proof shape, the scale and
-    bound the server enforces, and (for light verification) a canonical hash.
+    Checks exact coverage of the server's model, per-proof shape, the scale,
+    that the declared per-proof bounds sum to at most ``total_bound_sq``, and
+    (for light verification) a canonical hash.
     """
     if not isinstance(proofs, list) or not proofs or not all(isinstance(p, dict) for p in proofs):
         return "proofs must be a non-empty list of objects"
@@ -469,8 +495,8 @@ def check_proof_policy(
         return f"proof coverage mismatch: missing {missing[:3]}, unexpected {unexpected[:3]}"
 
     scale = DEFAULT_SCALE if scale is None else scale
-    bound = policy_bound_sq(scale, max_norm)
     pinned = pinned_norm_vk()
+    declared = 0
     for p in proofs:
         name = p["layer"]
         try:
@@ -481,8 +507,11 @@ def check_proof_policy(
             return f"proof '{name}' is malformed"
         if shape != layout[name]:
             return f"proof '{name}' has shape {shape}, server expects {layout[name]}"
-        if proof_scale != float(scale) or proof_bound != bound:
-            return f"proof '{name}' uses scale {proof_scale} / bound {proof_bound}, not the server policy"
+        if proof_scale != float(scale):
+            return f"proof '{name}' uses scale {proof_scale}, not the server policy"
+        if not 0 < proof_bound < BN254_R:
+            return f"proof '{name}' declares an invalid bound"
+        declared += proof_bound
         if not isinstance(p.get("proof_b64"), str) or not p["proof_b64"]:
             return f"proof '{name}' has no proof bytes"
         if p.get("vk_sha256") != pinned:
@@ -494,6 +523,8 @@ def check_proof_policy(
                 return f"proof '{name}' has a malformed hash"
             if not 0 <= h < BN254_R:
                 return f"proof '{name}' hash is not a canonical field element"
+    if declared > total_bound_sq:
+        return f"declared update bounds sum to {declared}, above the server's bound {total_bound_sq}"
     return None
 
 

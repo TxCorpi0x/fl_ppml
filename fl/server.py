@@ -133,6 +133,9 @@ class FedPrivate(fl.server.strategy.Strategy):
     def configure_fit(
         self, server_round: int, parameters: Parameters, client_manager: ClientManager
     ) -> List[Tuple[ClientProxy, FitIns]]:
+        # Size the sample only after min_available_clients have connected; sizing
+        # it first sampled 2 of 3 clients in round 1 whenever one was still starting.
+        client_manager.wait_for(self.min_available_clients)
         sample_size, min_num = self.num_fit_clients(client_manager.num_available())
         clients = client_manager.sample(
             num_clients=sample_size, min_num_clients=min_num

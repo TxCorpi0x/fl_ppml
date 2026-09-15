@@ -77,8 +77,9 @@ class _HeZKPDPCompositeMode(_HeZKPCompositeMode):
         return {"he": he_ctx, "zkp": zkp_ctx, "dp": dp_ctx}
 
     def setup_server_context(self, config) -> Any:
-        # Server only needs HE context; ZKP/DP are client-side.
-        return self._he_mode.setup_server_context(config)
+        # Server needs the HE context and the ZKP update-norm bound; DP is client-side.
+        # DP noise enlarges honest updates: calibrate FL_ZKP_MAX_NORM for DP runs.
+        return super().setup_server_context(config)
 
     def post_fit_metrics(self, context, benchmark=None) -> Dict:
         """Return HE + ZKP + DP timing metrics merged together."""

@@ -23,6 +23,14 @@ import copy
 import tempfile
 from types import SimpleNamespace as NS
 
+import fl.core.zkp_gnark as _zg
+
+if not hasattr(_zg, "DEFAULT_MAX_NORM"):
+    raise SystemExit(
+        "This script measures the Phase 1 weight bound, replaced in Step 7 Phase 2 "
+        "(see audit/evidence/norm_phase2_evidence.py). Run it on commit 09ee0dc."
+    )
+
 import numpy as np
 import torch
 from flwr.common import Code, FitRes, Status, ndarrays_to_parameters, parameters_to_ndarrays

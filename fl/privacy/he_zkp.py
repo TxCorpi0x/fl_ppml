@@ -118,9 +118,16 @@ class _HeZKPCompositeMode(PrivacyMode):
         return {"he": he_ctx, "zkp": zkp_ctx}
 
     def setup_server_context(self, config) -> Any:
-        # Server only needs the HE context (ZKP server ctx is always None).
-        resolve_backend(config)
+        # The ZKP server context is always None; this sets its update-norm bound.
+        self._zkp_mode.setup_server_context(config)
         return self._he_mode.setup_server_context(config)
+
+    def fit_config(self, server_round: int) -> Dict:
+        return {**self._he_mode.fit_config(server_round), **self._zkp_mode.fit_config(server_round)}
+
+    def on_fit_config(self, context, fit_config: Dict) -> None:
+        self._he_mode.on_fit_config(context["he"], fit_config)
+        self._zkp_mode.on_fit_config(context["zkp"], fit_config)
 
     def bind_server_model(self, server_context, model) -> None:
         self._server_schema = model_schema(model)
@@ -174,7 +181,9 @@ class _HeZKPCompositeMode(PrivacyMode):
     def receive_parameters(
         self, net, params, context, *, sim_mode, benchmark=None, encrypt_layers=None
     ) -> None:
-        """Decrypt HE-encrypted parameters from server."""
+        """Decrypt HE-encrypted parameters from server; keep them as the update's base."""
+        from fl.privacy.zkp import state_arrays
+
         self._he_mode.receive_parameters(
             net,
             params,
@@ -183,6 +192,8 @@ class _HeZKPCompositeMode(PrivacyMode):
             benchmark=benchmark,
             encrypt_layers=encrypt_layers,
         )
+        if isinstance(context.get("zkp"), dict):
+            context["zkp"]["global"] = state_arrays(net)
 
     # ── Post-fit: attach ZKP proof payloads to fit() response ────────────
 
@@ -232,7 +243,9 @@ class _HeZKPCompositeMode(PrivacyMode):
                 with timer(benchmark, "proof_verification"):
                     proofs = parse_proofs(fit_res.metrics or {})
                     reason = (
-                        zkp_gnark.check_proof_policy(proofs, schema, require_hash=True)
+                        zkp_gnark.check_proof_policy(
+                            proofs, schema, require_hash=True, total_bound_sq=self._zkp_mode._total_bound_sq(schema)
+                        )
                         if proofs
                         else "missing or malformed proofs"
                     )

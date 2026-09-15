@@ -497,6 +497,11 @@ def run_distributed(
         v = base_args.get(key)
         if v is not None and v != "":
             server_extra.extend([flag, str(v)])
+    # Start round 1 only once every client is connected (FedPrivate.configure_fit
+    # waits for min_avail_clients before sizing its sample). Otherwise a late client
+    # misses round 1: for commit–challenge modes it then has nothing to answer
+    # the challenge with, and every mode runs its first round with fewer clients.
+    server_extra.extend(["--min_avail_clients", str(num_clients)])
 
     # Chain ledger args are server-only (clients don't write to the ledger)
     chain_backend = base_args.get("chain_backend", "")

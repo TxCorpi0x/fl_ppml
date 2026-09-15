@@ -3,7 +3,11 @@ Zero-Knowledge Proof (ZKP) mode.
 
 Backends:
   gnark    — Groth16 zk-SNARK via the Go gnark service. Proves an L2 bound and
-             a MiMC hash over the submitted plaintext weights.
+             a MiMC hash over the quantized update Δq = round(w·s) − round(g·s)
+             against the global model g (audit/norm.md). Clients clip the
+             update to the server's bound B first; the server recomputes Δq
+             from the upload and its own global model, and requires the
+             per-proof declared bounds to sum to ⌈B·s + √n⌉².
   pedersen — STUB ONLY. Pedersen commitments are computed locally but never
              sent or verified, so there is no Byzantine-fault protection.
              Refused unless FL_ZKP_ALLOW_PEDERSEN_STUB=1; when allowed, every
@@ -107,6 +111,76 @@ def model_schema(model) -> List[Tuple[str, Tuple[int, ...]]]:
     return [(name, tuple(int(d) for d in t.shape)) for name, t in model.state_dict().items()]
 
 
+def state_arrays(model) -> List[np.ndarray]:
+    return [t.detach().cpu().numpy().copy() for t in model.state_dict().values()]
+
+
+def cast_like(arrays, like) -> List[np.ndarray]:
+    """Arrays in the dtypes clients hold after loading them into the model."""
+    return [np.asarray(a).astype(ref.dtype) for a, ref in zip(arrays, like)]
+
+
+def quantized_update(params, global_arrays) -> List[np.ndarray]:
+    """Δq = round(w·scale) − round(g·scale) per tensor, as both sides compute it."""
+    from fl.core.zkp_gnark import quantize
+
+    if len(params) != len(global_arrays):
+        raise ValueError("update and global model have different tensor counts")
+    return [quantize(p) - quantize(g) for p, g in zip(params, global_arrays)]
+
+
+def clip_update_in_place(net, context: Dict) -> Tuple[Dict[str, np.ndarray], int]:
+    """Clip net's update to the server's bound, write it back, and return (Δq per tensor, total bound).
+
+    The clip is checked against the exact integer statement the server will
+    check, including one unit per proof for proofs whose update is zero.
+    """
+    from fl.core import zkp_gnark
+    from fl.core.update_bound import clip_update
+
+    global_arrays = context.get("global")
+    bound = context.get("max_update_norm")
+    if global_arrays is None:
+        raise RuntimeError("[ZKP] no global model received; refusing to prove an update without its base")
+    if bound is None:
+        raise RuntimeError("[ZKP] server sent no update-norm bound")
+    sd = net.state_dict()
+    names = list(sd.keys())
+    local = [t.detach().cpu().numpy() for t in sd.values()]
+    shapes, sizes = [a.shape for a in local], [a.size for a in local]
+    n = int(sum(sizes))
+    total = zkp_gnark.policy_bound_sq(bound, n)
+    n_proofs = len(zkp_gnark.expected_proof_layout([(k, s) for k, s in zip(names, shapes)]))
+    g_q = np.concatenate([zkp_gnark.quantize(g).reshape(-1) for g in global_arrays])
+
+    def fits(flat32):
+        return zkp_gnark.energy(zkp_gnark.quantize(flat32) - g_q) + n_proofs <= total
+
+    g_flat = np.concatenate([np.asarray(g, dtype=np.float64).reshape(-1) for g in global_arrays])
+    l_flat = np.concatenate([a.astype(np.float64).reshape(-1) for a in local])
+    new_flat, norm, clipped = clip_update(g_flat, l_flat, bound, fits)
+    context["update_norm"], context["update_clipped"] = norm, clipped
+
+    import torch
+
+    out, new_state, offset = {}, {}, 0
+    for i, (name, shape, size, ref) in enumerate(zip(names, shapes, sizes, local)):
+        # Unclipped: prove exactly the tensors that will be uploaded.
+        values = new_flat[offset : offset + size].reshape(shape).astype(ref.dtype) if clipped else ref
+        new_state[name] = torch.from_numpy(np.ascontiguousarray(values))
+        out[name] = zkp_gnark.quantize(values) - zkp_gnark.quantize(global_arrays[i])
+        offset += size
+    if clipped:
+        net.load_state_dict(new_state)
+    return out, total
+
+
+def update_metrics(context) -> Dict:
+    if not isinstance(context, dict) or "update_norm" not in context:
+        return {}
+    return {"zkp_update_norm": float(context["update_norm"]), "zkp_update_clipped": int(bool(context["update_clipped"]))}
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Mode
 # ─────────────────────────────────────────────────────────────────────────────
@@ -136,21 +210,38 @@ class ZKPMode(PrivacyMode):
         return {"backend": "pedersen", "context": read_zkp_params(path)}
 
     def setup_server_context(self, config) -> None:
-        resolve_backend(config)
+        if resolve_backend(config) == "gnark":
+            from fl.core.update_bound import max_update_norm
+
+            self._max_update_norm = max_update_norm(config)
         return None
 
     def bind_server_model(self, server_context, model) -> None:
         self._server_schema = model_schema(model)
+        # The global model every update is measured against; the same float32
+        # values the strategy sends clients in round 1.
+        self._global = state_arrays(model)
+
+    def fit_config(self, server_round: int) -> Dict:
+        from fl.core.update_bound import FIT_CONFIG_KEY
+
+        bound = getattr(self, "_max_update_norm", None)
+        return {} if bound is None else {FIT_CONFIG_KEY: str(bound)}
 
     # ── Client ─────────────────────────────────────────────────────────────
 
+    def on_fit_config(self, context, fit_config: Dict) -> None:
+        if isinstance(context, dict) and context.get("backend") == "gnark":
+            from fl.core.update_bound import bound_from_fit_config
+
+            context["max_update_norm"] = bound_from_fit_config(fit_config)
+
     def get_parameters(self, net, context, *, sim_mode, benchmark=None) -> List[np.ndarray]:
-        """Generate ZKP proofs (benchmarking) then return plain params."""
-        self._generate_proofs(net, context, phase="get_params", benchmark=benchmark)
+        """Initial parameters carry no update, so no proof."""
         return _plain_params(net)
 
     def send_parameters(self, net, context, *, sim_mode, benchmark=None, encrypt_layers=None) -> List[np.ndarray]:
-        """Generate ZKP proofs after training, then return plain params."""
+        """Clip the update to the server's bound, prove it, then return the clipped plain params."""
         self._proof_cache = self._generate_proofs(net, context, phase="send", benchmark=benchmark)
         return _plain_params(net)
 
@@ -158,6 +249,8 @@ class ZKPMode(PrivacyMode):
         from fl.core.params import set_parameters
 
         set_parameters(net, params, None, None)
+        if isinstance(context, dict):
+            context["global"] = state_arrays(net)
 
     def post_fit_metrics(self, context: Any, benchmark=None) -> Dict:
         """Include proof payloads in the fit() response for server verification."""
@@ -171,6 +264,7 @@ class ZKPMode(PrivacyMode):
             "zkp_proofs_json": json.dumps(proof_payloads),
             "gnark_num_proofs": len(proof_payloads),
             "gnark_proof_bytes": proof_bytes,
+            **update_metrics(context),
         }
 
     # ── Server ─────────────────────────────────────────────────────────────
@@ -221,20 +315,22 @@ class ZKPMode(PrivacyMode):
                 [(parameters_to_ndarrays(fit_res.parameters), fit_res.num_examples) for _, fit_res, _ in admitted]
             )
             params = ndarrays_to_parameters(aggregated)
+        self._global = cast_like(aggregated, self._global)
 
         self._last_anchor_data = anchor_data(server_round, [(str(cp.cid), proofs) for cp, _, proofs in admitted])
         self.last_round_report = round_report(server_round, "aggregated", [cp.cid for cp, _, _ in admitted], rejected)
         return params, {"round_outcome": "aggregated", "admitted": len(admitted), "rejected": len(rejected)}
 
-    @staticmethod
-    def _check_client(fit_res, schema, parameters_to_ndarrays) -> Tuple[Optional[str], list]:
+    def _check_client(self, fit_res, schema, parameters_to_ndarrays) -> Tuple[Optional[str], list]:
         """Return (rejection reason or None, proofs). Raises GnarkServiceError on infrastructure failure."""
         from fl.core import zkp_gnark
 
         proofs = parse_proofs(fit_res.metrics or {})
         if not proofs:
             return "missing or malformed proofs", []
-        reason = zkp_gnark.check_proof_policy(proofs, schema, require_hash=False)
+        reason = zkp_gnark.check_proof_policy(
+            proofs, schema, require_hash=False, total_bound_sq=self._total_bound_sq(schema)
+        )
         if reason:
             return reason, []
         params = parameters_to_ndarrays(fit_res.parameters)
@@ -242,10 +338,20 @@ class ZKPMode(PrivacyMode):
             tuple(np.shape(p)) != shape for p, (_, shape) in zip(params, schema)
         ):
             return "update does not match the server's model schema", []
-        ok, failed = zkp_gnark.verify_gnark_proofs(params, [name for name, _ in schema], proofs)
+        # The proofs cover the update against the server's own global model.
+        delta = quantized_update(params, self._global)
+        ok, failed = zkp_gnark.verify_gnark_proofs(delta, [name for name, _ in schema], proofs)
         if not ok:
             return f"proof verification failed for {failed[:5]}", []
         return None, proofs
+
+    def _total_bound_sq(self, schema, n: Optional[int] = None) -> int:
+        from fl.core import zkp_gnark
+
+        bound = getattr(self, "_max_update_norm", None)
+        if bound is None:
+            raise RuntimeError("update-norm bound not set: setup_server_context must run first")
+        return zkp_gnark.policy_bound_sq(bound, n if n is not None else sum(int(np.prod(s)) for _, s in schema))
 
     # ── Internal helpers ───────────────────────────────────────────────────
 
@@ -257,7 +363,8 @@ class ZKPMode(PrivacyMode):
             from fl.core.zkp_gnark import generate_gnark_proofs
 
             with timer(benchmark, "proof_generation"):
-                proof_payloads, proof_bytes = generate_gnark_proofs(net.state_dict(), layers=layers)
+                delta, total = clip_update_in_place(net, context)
+                proof_payloads, proof_bytes = generate_gnark_proofs(delta, layers=layers, total_bound_sq=total)
             if not proof_payloads:
                 raise RuntimeError("[ZKP] no proofs generated; refusing to upload an unproven update")
             return backend, proof_payloads, proof_bytes

@@ -18,12 +18,13 @@ from tests.conftest import break_gnark, requires_gnark, use_gnark
 
 DEAD = "http://127.0.0.1:1"
 
-HONEST = OrderedDict(
+GLOBAL = OrderedDict(
     [
         ("model.0.weight", np.array([[0.1, -0.2], [0.3, -0.4]], dtype=np.float32)),
         ("model.0.bias", np.array([0.05, -0.05], dtype=np.float32)),
     ]
 )
+HONEST = OrderedDict((k, (v + np.float32(0.01)).astype(np.float32)) for k, v in GLOBAL.items())  # small update
 
 
 class TinyModel(torch.nn.Module):
@@ -46,6 +47,7 @@ def _config(**overrides):
 def _clean_env(monkeypatch):
     for var in ("FL_ZKP_BACKEND", "FL_ZKP_LAYERS", "FL_ZKP_ALLOW_PEDERSEN_STUB"):
         monkeypatch.delenv(var, raising=False)
+    monkeypatch.setenv("FL_ZKP_MAX_NORM", "1.0")
 
 
 @pytest.fixture
@@ -54,19 +56,37 @@ def live(monkeypatch, gnark):
     return gnark
 
 
-def _upload(weights=HONEST):
+def _client_context(server):
+    """A client that downloaded the server's global model and bound."""
     from fl.privacy.zkp import ZKPMode
 
-    mode = ZKPMode()
-    params = mode.send_parameters(TinyModel(weights), {"backend": "gnark"}, sim_mode=False)
-    return params, mode.post_fit_metrics(None)
+    client, ctx = ZKPMode(), {"backend": "gnark"}
+    client.on_fit_config(ctx, {"server_round": 1, **server.fit_config(1)})
+    client.receive_parameters(TinyModel(), list(server._global), ctx, sim_mode=False)
+    return client, ctx
+
+
+def _upload(weights=HONEST):
+    client, ctx = _client_context(_zkp_server())
+    params = client.send_parameters(TinyModel(weights), ctx, sim_mode=False)
+    return params, client.post_fit_metrics(ctx)
 
 
 def _zkp_server():
     from fl.privacy.zkp import ZKPMode
 
     mode = ZKPMode()
-    mode.bind_server_model(None, TinyModel())
+    mode.setup_server_context(_config())
+    mode.bind_server_model(None, TinyModel(GLOBAL))
+    return mode
+
+
+def _composite_server():
+    from fl.privacy.he_zkp import HeTensealZKPMode
+
+    mode = HeTensealZKPMode()
+    mode._zkp_mode.setup_server_context(_config())  # the HE context needs keys these tests don't use
+    mode.bind_server_model(None, TinyModel(GLOBAL))
     return mode
 
 
@@ -74,11 +94,19 @@ def _zkp_server():
 
 
 def test_client_proof_generation_failure_raises(monkeypatch):
-    from fl.privacy.zkp import ZKPMode
-
+    client, ctx = _client_context(_zkp_server())
     break_gnark(monkeypatch, DEAD)
     with pytest.raises(RuntimeError):
-        ZKPMode().send_parameters(TinyModel(HONEST), {"backend": "gnark"}, sim_mode=False)
+        client.send_parameters(TinyModel(HONEST), ctx, sim_mode=False)
+
+
+def test_client_refuses_to_prove_without_global_model_or_bound():
+    from fl.privacy.zkp import ZKPMode
+
+    with pytest.raises(RuntimeError, match="no global model"):
+        ZKPMode().send_parameters(TinyModel(HONEST), {"backend": "gnark", "max_update_norm": 1.0}, sim_mode=False)
+    with pytest.raises(RuntimeError, match="no update-norm bound"):
+        ZKPMode().on_fit_config({"backend": "gnark"}, {"server_round": 1})
 
 
 def test_pedersen_stub_is_refused_unless_explicitly_allowed(monkeypatch):
@@ -132,7 +160,7 @@ def test_bad_uploads_are_rejected_without_raising(live, tamper):
     if tamper == "drop_layer_proof":
         proofs = proofs[:1]
     elif tamper == "off_policy_bound":
-        proofs = [dict(p, bound_sq=str(int(p["bound_sq"]) * 4)) for p in proofs]
+        proofs = [dict(p, bound_sq=str(zkp_gnark.policy_bound_sq(1.0, 6) + 1)) for p in proofs]
     elif tamper == "missing_scale":
         proofs = [{k: v for k, v in p.items() if k != "scale"} for p in proofs]
     elif tamper == "no_proofs":
@@ -195,11 +223,8 @@ def test_malformed_payload_counts_as_verification_failure(monkeypatch):
 
 @requires_gnark
 def test_composite_never_aggregates_rejected_clients(live):
-    from fl.privacy.he_zkp import HeTensealZKPMode
-
     honest_params, honest_metrics = _upload()
-    mode = HeTensealZKPMode()
-    mode.bind_server_model(None, TinyModel())
+    mode = _composite_server()
     poisoned = [np.full_like(p, 1000.0) for p in honest_params]
     results = [
         (NS(cid="honest"), _fit(honest_params, honest_metrics)),
@@ -215,11 +240,8 @@ def test_composite_never_aggregates_rejected_clients(live):
 
 @requires_gnark
 def test_composite_service_outage_aborts_round(live, monkeypatch):
-    from fl.privacy.he_zkp import HeTensealZKPMode
-
     upload = _upload()
-    mode = HeTensealZKPMode()
-    mode.bind_server_model(None, TinyModel())
+    mode = _composite_server()
     break_gnark(monkeypatch, DEAD)
 
     params, out = mode.aggregate_fit_override(1, [(NS(cid="c"), _fit(*upload))], [], None, _config())
@@ -291,6 +313,31 @@ def test_model_commit_hashes_only_admitted_clients():
     s.aggregate_fit(2, results, [])
 
     assert chain.events == [("ModelCommit", 2, 1)]
+
+
+def test_first_round_samples_every_client_that_connects_while_waiting():
+    """A client still starting when round 1 is configured must not be left out of it."""
+    from fl.server import FedPrivate
+
+    class _Manager:
+        available = 2
+
+        def num_available(self):
+            return self.available
+
+        def wait_for(self, num_clients, timeout=86400):
+            self.available = max(self.available, num_clients)  # the third client connects
+            return True
+
+        def sample(self, num_clients, min_num_clients):
+            return [NS(cid=str(i)) for i in range(num_clients)]
+
+    s = FedPrivate.__new__(FedPrivate)
+    s.fraction_fit, s.min_fit_clients, s.min_available_clients = 1.0, 2, 3
+    s.config = NS(local_epochs=1, learning_rate=0.001, batch_size=16)
+    s.mode = NS(fit_config=lambda r: {})
+
+    assert len(s.configure_fit(1, None, _Manager())) == 3
 
 
 def test_ledger_save_failure_raises(tmp_path):

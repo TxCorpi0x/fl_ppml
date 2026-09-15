@@ -105,12 +105,16 @@ def main():
 
             with tempfile.TemporaryDirectory() as d:
                 generate(secret_path=f"{d}/s.json", public_path=f"{d}/p.json")
-                pk = load_client(f"{d}/s.json")["pk"]
+                keys = load_client(f"{d}/s.json")
+            pk = keys["pk"]
             zg.DEFAULT_PROVER_URL = prover_url
-            ct, proof = eg.prove_chunk(pk, np.array([3, -4], dtype=np.int64), 100, 7)
+            # Step 7: ElGamal proofs are relative to a global model (here the public initial model [3, -4]).
+            glob = eg.GlobalModel(weight=1, plain=np.array([3, -4], dtype=np.int64))
+            ct, proof = eg.prove_chunk(pk, keys["sk"], np.array([5, -6], dtype=np.int64), 100, 7, glob.request([0, 1], prover=True))
+            glob = glob.request([0, 1], prover=False)
             for label, url in (("V1", v1_url), ("V2", v2_url)):
                 zg.DEFAULT_VERIFIER_URL = url
-                print(f"Q3  elgamal: prove on P, verify on {label}        ->", eg.verify_chunk(pk, ct, 100, 7, proof))
+                print(f"Q3  elgamal: prove on P, verify on {label}        ->", eg.verify_chunk(pk, ct, 100, 7, proof, glob))
 
             stop(v1)
             procs.remove(v1)
@@ -118,12 +122,12 @@ def main():
             procs.append(v1)
             zg.DEFAULT_VERIFIER_URL = v1_url
             print("Q2  norm: prove on P, restart V1, verify     ->", light(v1_url))
-            print("    elgamal: prove on P, restart V1, verify  ->", eg.verify_chunk(pk, ct, 100, 7, proof))
+            print("    elgamal: prove on P, restart V1, verify  ->", eg.verify_chunk(pk, ct, 100, 7, proof, glob))
 
             zg.DEFAULT_VERIFIER_URL = foreign_url
             print("Q4  norm: verify on verifier with other keys ->", outcome(lambda: light(foreign_url)))
             print("    elgamal: same                            ->",
-                  outcome(lambda: eg.verify_chunk(pk, ct, 100, 7, proof)))
+                  outcome(lambda: eg.verify_chunk(pk, ct, 100, 7, proof, glob)))
 
             print("Q5  POST verifier/prove                      -> HTTP",
                   requests.post(f"{v1_url}/prove", json={}, timeout=5).status_code)

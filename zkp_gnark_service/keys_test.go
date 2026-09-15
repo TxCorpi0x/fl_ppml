@@ -125,22 +125,24 @@ func TestProofsVerifyAcrossSeparateProverAndVerifierStores(t *testing.T) {
 	keysDir, pkDir := runTestSetup(t)
 	prover, _ := loadStore(roleProver, keysDir, pkDir)
 	verifier, _ := loadStore(roleVerifier, keysDir, "")
-	pk := mulBase(mustKeygen(t))
+	sk := mustKeygen(t)
+	pk := mulBase(sk)
 	bound, ctx := big.NewInt(1_000_000), big.NewInt(3)
+	glob, sums := plainTestGlobal(t, []int64{3})
 
 	withStore(t, prover)
-	cts, proof, err := elgamalProve(pk, []int64{7}, bound, ctx) // 1 value, padded to n = 2
+	cts, proof, err := elgamalProve(pk, sk, []int64{7}, glob, sums, bound, ctx) // 1 value, padded to n = 2
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := elgamalVerify(pk, cts, bound, ctx, proof); err == nil {
+	if _, err := elgamalVerify(pk, cts, glob, bound, ctx, proof); err == nil {
 		t.Fatal("prover role verified a proof")
 	}
 	store = verifier
-	if ok, err := elgamalVerify(pk, cts, bound, ctx, proof); err != nil || !ok {
+	if ok, err := elgamalVerify(pk, cts, glob, bound, ctx, proof); err != nil || !ok {
 		t.Fatalf("separate verifier rejected an honest padded proof: %v", err)
 	}
-	if _, _, err := elgamalProve(pk, []int64{7}, bound, ctx); err == nil {
+	if _, _, err := elgamalProve(pk, sk, []int64{7}, glob, sums, bound, ctx); err == nil {
 		t.Fatal("verifier role produced a proof")
 	}
 }

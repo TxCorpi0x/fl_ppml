@@ -51,7 +51,7 @@ class CommitChallengeMixin:
 
     def fit_config(self, server_round: int) -> Dict:
         """Phase for this Flower round; the challenge seed is created here, after commits arrived."""
-        config: Dict[str, Any] = {"zkp_phase": self.phase(server_round)}
+        config: Dict[str, Any] = {**super().fit_config(server_round), "zkp_phase": self.phase(server_round)}
         if config["zkp_phase"] == "challenge":
             seeds = self.__dict__.setdefault("_round_seeds", {})
             seeds.setdefault(server_round, new_round_seed())
@@ -74,6 +74,7 @@ class CommitChallengeMixin:
     def on_fit_config(self, context, fit_config: Dict) -> None:
         if "zkp_phase" not in fit_config:
             raise RuntimeError("server did not send a commit/challenge phase; it is not running this protocol")
+        super().on_fit_config(context, fit_config)  # the base mode's policy, e.g. the update-norm bound
         context["round"] = int(fit_config["server_round"])
         context["phase"] = fit_config["zkp_phase"]
         context["sample_seed"] = fit_config.get("zkp_sample_seed")
@@ -90,7 +91,12 @@ class CommitChallengeMixin:
         if phase == "challenge":
             commitment = context.get("commitment")
             if not commitment or commitment["round"] != context["round"] - 1:
-                raise RuntimeError("challenge received without a commitment from the previous round")
+                # E.g. the client connected after the commit round. Answer with
+                # no proofs; the server rejects it as having no commitment.
+                print(f"[{self.name.upper()}] round {context['round']}: challenge without a commitment; sending no proofs")
+                context["commitment"] = None
+                self._proof_cache = None
+                return []
             n = commitment["n"]
             indices = sample_indices(context["sample_seed"], n, sample_size(n, context["sample_rate"]))
             proofs, proof_bytes = self._client_respond(context, commitment, indices, benchmark)

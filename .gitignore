@@ -228,6 +228,10 @@ keys/
 # Key-management source code, not key material.
 !fl/keys/
 
+# Flower state (FLWR_HOME) that fl.launch keeps next to each run's logs;
+# also keeps it out of the FAB that `flwr run` builds from this directory.
+.flwr/
+
 # ZKP
 gnark_service
 

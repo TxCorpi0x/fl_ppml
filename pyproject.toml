@@ -1,0 +1,52 @@
+[project]
+name = "fl-ppml"
+version = "1.0.0"
+description = "Privacy-preserving federated learning with HE, ZKP and DP on Flower"
+requires-python = ">=3.12,<3.13"
+dependencies = ["flwr[simulation]==1.36.0"]
+
+[tool.flwr.app]
+publisher = "txcorpi0x"
+# The ServerApp and ClientApp are imported from the `fl` package on
+# PYTHONPATH (fl.launch puts this checkout there), not from a copy inside the
+# FAB: `fl` finds its keys and dataset helpers relative to its own location.
+fab-include = ["/README.md"]
+
+[tool.flwr.app.components]
+serverapp = "fl.server:server_app"
+clientapp = "fl.client:client_app"
+
+# Run config read by fl.config.FLConfig.from_run_config. Numeric 0 means
+# "unset" for min-eval-clients (num-clients // 2), dirichlet-alpha (IID),
+# dp-epsilon (use the DP parameter file) and round-timeout (no limit).
+[tool.flwr.app.config]
+mode = "baseline"
+dataset = "healthcare"
+data-path = "./dataset/"
+num-clients = 3
+num-rounds = 3
+local-epochs = 1
+batch-size = 16
+learning-rate = 0.001
+seed = 42
+device = "cpu"
+num-workers = 0
+frac-fit = 1.0
+frac-eval = 0.5
+min-fit-clients = 2
+min-eval-clients = 0
+min-avail-clients = 2
+dirichlet-alpha = 0.0
+he-tenseal-secret-path = "keys/he_tenseal/secret_context.bin"
+he-tenseal-public-path = "keys/he_tenseal/public_context.bin"
+zkp-backend = "gnark"
+zkp-params-path = "keys/zkp/zkp_params.json"
+dp-params-path = "keys/dp/dp_params.json"
+dp-epsilon = 0.0
+results-dir = "./results/"
+model-save = ""
+benchmark = true
+sim-mode = false
+chain-backend = "mock"
+chain-ledger-path = ""
+round-timeout = 0

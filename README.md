@@ -42,7 +42,7 @@ Each mode addresses a distinct threat in the federated learning pipeline.
 | 1 | Baseline | `baseline` | None | — |
 | 2 | HE TenSEAL | `he_tenseal` | CKKS (TenSEAL) | Gradient confidentiality |
 | 3 | HE Concrete TFHE | `he_concrete_tfhe` | TFHE (Concrete ML) | Gradient confidentiality (bandwidth-efficient) |
-| 4 | ZKP Sampled | `zkp_sampled` | Groth16 zk-SNARK, sampled layers | Gradient integrity |
+| 4 | ZKP Sampled | `zkp_sampled` | Groth16 zk-SNARK over server-sampled coordinates (commit–challenge) | None beyond `zkp`: the server already sees plaintext. Benchmark of sampled proving cost only |
 | 5 | ZKP Full | `zkp` | Groth16 zk-SNARK, all layers | Gradient integrity — full coverage |
 | 6 | DP | `dp` | Gaussian DP-SGD (Opacus) | Membership inference |
 | 7 | HE TenSEAL + ZKP | `he_tenseal_zkp` | CKKS + Groth16 (unbound) | Confidentiality only — proof not bound to ciphertext |
@@ -50,6 +50,7 @@ Each mode addresses a distinct threat in the federated learning pipeline.
 | 9 | HE TenSEAL + ZKP + DP | `he_tenseal_zkp_dp` | CKKS + Groth16 (unbound) + DP-SGD | Confidentiality + membership privacy; no integrity |
 | 10 | HE Concrete + ZKP + DP | `he_concrete_tfhe_zkp_dp` | TFHE + Groth16 (unbound) + DP-SGD | Confidentiality + membership privacy; no integrity |
 | 11 | HE ElGamal + ZKP | `he_elgamal_zkp` | Exponential ElGamal (BabyJubJub) + ciphertext-bound Groth16 | Confidentiality + Integrity (norm-bounded, range-checked upload) |
+| 12 | HE ElGamal + sampled ZKP | `he_elgamal_zkp_sampled` | As mode 11, proving only server-sampled committed coordinates (commit–challenge, two Flower rounds per round) | Confidentiality + probabilistic integrity: m out-of-bound coordinates detected with probability 1 − C(n−m, s)/C(n, s) (`audit/sampling.md`) |
 
 > **Integrity in modes 7–10.** Their ZKP proof covers a client-chosen plaintext vector and is not bound to the ciphertext the server aggregates, so a client can prove an honest vector and upload a poisoned one (`tests/test_zkp_binding_attack.py`, `audit/binding.md`). Only mode 11 binds proofs to the aggregated ciphertexts. Its remaining limitations — a bound on weights rather than the update, an in-process trusted setup, a shared client key — are listed in `fl/privacy/he_elgamal_zkp.py`.
 
@@ -453,10 +454,7 @@ All tuning is via environment variables — no code changes required. Variables 
 |----------|---------|-------------|
 | `FL_ZKP_BACKEND` | `gnark` | `gnark` = Groth16 zk-SNARK; `pedersen` = legacy commitment stub (no verification), refused unless `FL_ZKP_ALLOW_PEDERSEN_STUB=1` |
 | `FL_ZKP_ALLOW_PEDERSEN_STUB` | `0` | `1` = knowingly run the unverified pedersen stub; every round is recorded as `unverified_stub` |
-| `FL_ZKP_SELECT_BY` | `size` | `size` = largest layers; `random` = rotate across rounds |
-| `FL_ZKP_NUM_LAYERS` | `1` | Layers proven per client per round |
-| `FL_ZKP_SAMPLE_PCT` | — | Fraction of layers to prove (alternative to `FL_ZKP_NUM_LAYERS`) |
-| `FL_ZKP_SAMPLE_SEED` | — | Seed for reproducible layer sampling |
+| `FL_ZKP_SAMPLE_PCT` | `0.1` | Sampled modes: fraction of model coordinates proven per client per round, in (0, 1]. Set on the server; the per-round seed is drawn by the server after clients commit and recorded in `round_outcomes` |
 | `FL_ZKP_PARALLELISM` | `4` | Concurrent proof workers |
 | `FL_ZKP_SCALE` | `1000000` | Float→int64 scale for the proof circuit |
 | `FL_ZKP_MAX_NORM` | `100.0` | Max ℓ₂ gradient norm in circuit; match to DP clipping norm when combining |
@@ -468,7 +466,7 @@ All tuning is via environment variables — no code changes required. Variables 
 - The server checks every upload against its own model schema and proof policy: full coverage, shapes, scale and bound. Clients that fail are rejected; the round aborts if the proof service is unreachable.
 - If fewer clients are admitted than `min_fit_clients`, the global model is unchanged and nothing is written to the ledger.
 - Every round's outcome (`aggregated`, `no_quorum`, `infrastructure_abort`), including rejected clients and reasons, is recorded under `round_outcomes` in `comparison_report.json`. ZKP runs with any non-aggregated round fail validation.
-- `zkp_sampled` uploads don't cover every layer, so they are rejected until sampling is redesigned.
+- Sampled modes (`zkp_sampled`, `he_elgamal_zkp_sampled`) use two Flower rounds per round (commit, then challenge). A client that commits but doesn't answer the challenge, or answers without having committed, is rejected.
 - DP without a params file refuses to run unless `--dp_epsilon` is passed explicitly.
 
 ### HE

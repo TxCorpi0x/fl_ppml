@@ -91,9 +91,11 @@ def test_honest_clients_are_aggregated_after_the_challenge():
 def test_oversized_update_is_clipped_at_commit():
     server = _server()
     ctx, client = {"backend": "gnark"}, ZKPSampledMode()
-    params, _ = _client_round(client, ctx, server, 1, TinyModel(scale=50.0))
+    params, metrics = _client_round(client, ctx, server, 1, TinyModel(scale=50.0))
     delta = np.concatenate([(p - g).reshape(-1) for p, g in zip(params, server._global)])
-    assert ctx["update_clipped"] and np.linalg.norm(delta.astype(np.float64)) <= BOUND + 1e-4
+    # The commit round reports clip status (the challenge round has nothing new to report).
+    assert metrics["zkp_update_clipped"] == 1 and metrics["zkp_update_norm"] > BOUND
+    assert np.linalg.norm(delta.astype(np.float64)) <= BOUND + 1e-4
 
 
 def test_seed_is_fresh_per_challenge_round():

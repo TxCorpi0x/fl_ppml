@@ -1675,11 +1675,11 @@ The default `1,000,000` works for standard neural network weights.
 
 #### Tuning `FL_ZKP_MAX_NORM`
 
-The circuits bound the **update** ‖w_local − w_global‖₂, not the weights (audit/norm.md). The server sets the bound B and sends it to clients, which clip their update to B before proving. By default B is calibrated per dataset and scaled by local epochs:
+The circuits bound the **update** ‖w_local − w_global‖₂, not the weights (audit/norm.md). The server sets the bound B and sends it to clients, which clip their update to B before proving. By default B is calibrated per dataset as a bound per optimiser step and scaled by local steps (`local_epochs × max_client_batches`), because an honest update grows with the number of steps, which depends on the client count and batch size (audit/norm.md N-3):
 
 ```bash
-PYTHONPATH=. python scripts/calibrate_update_norm.py --dataset healthcare --clients 3 --rounds 5
-## → add per_epoch_bound to PER_EPOCH_UPDATE_NORM in fl/core/update_bound.py
+PYTHONPATH=. python scripts/calibrate_update_norm.py --dataset healthcare --clients 2,3,5 --init-seeds 0,1,2,3,42
+## → add per_step_bound to PER_STEP_UPDATE_NORM in fl/core/update_bound.py
 ## or override for one run (an update norm, e.g. for DP runs):
 export FL_ZKP_MAX_NORM=0.05
 ```

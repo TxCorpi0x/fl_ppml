@@ -304,6 +304,20 @@ def test_no_model_commit_or_anchor_for_a_round_without_update():
     assert s.benchmark.summary()["round_outcomes"] == [recorded]
 
 
+def test_round_outcome_records_update_clipping():
+    report = {"round": 1, "outcome": "aggregated", "admitted": ["a", "b"], "rejected": {}}
+    s = _strategy(_Mode(ndarrays_to_parameters([np.ones(2, np.float32)]), report), _Chain())
+    results = [
+        (NS(cid="a"), _fit([np.zeros(2, np.float32)], {"zkp_update_norm": 0.02, "zkp_update_clipped": 0})),
+        (NS(cid="b"), _fit([np.zeros(2, np.float32)], {"zkp_update_norm": 0.09, "zkp_update_clipped": 1})),
+    ]
+
+    s.aggregate_fit(1, results, [])
+
+    [recorded] = s.benchmark.round_outcomes
+    assert recorded["clipped"] == ["b"] and recorded["update_norms"] == {"a": 0.02, "b": 0.09}
+
+
 def test_model_commit_hashes_only_admitted_clients():
     report = {"round": 2, "outcome": "aggregated", "admitted": ["a"], "rejected": {"b": "bad proof"}}
     chain = _Chain()
@@ -338,6 +352,38 @@ def test_first_round_samples_every_client_that_connects_while_waiting():
     s.mode = NS(fit_config=lambda r: {})
 
     assert len(s.configure_fit(1, None, _Manager())) == 3
+
+
+@pytest.mark.parametrize("phase", ["fit", "evaluate"])
+def test_server_stops_instead_of_waiting_forever_for_departed_clients(monkeypatch, phase):
+    """audit/failmodes.md F-2: after every client exited, the server blocked in Flower's 24-hour wait."""
+    from fl.server import FedPrivate
+
+    waited = {}
+
+    class _Gone:
+        def num_available(self):
+            return 0
+
+        def wait_for(self, num_clients, timeout=86400):
+            waited["timeout"] = timeout
+            return False
+
+        def sample(self, num_clients, min_num_clients):
+            pytest.fail("sampled clients that never arrived")
+
+    monkeypatch.setenv("FL_CLIENT_WAIT_TIMEOUT", "5")
+    s = FedPrivate.__new__(FedPrivate)
+    s.fraction_fit = s.fraction_evaluate = 1.0
+    s.min_fit_clients = s.min_evaluate_clients = 2
+    s.min_available_clients = 3
+    s.config = NS(local_epochs=1, learning_rate=0.001, batch_size=16)
+    s.mode = NS(fit_config=lambda r: {}, evaluates_this_round=lambda r: True)
+
+    configure = s.configure_fit if phase == "fit" else s.configure_evaluate
+    with pytest.raises(RuntimeError, match="only 0 of 3 required clients"):
+        configure(1, None, _Gone())
+    assert waited["timeout"] == 5
 
 
 def test_ledger_save_failure_raises(tmp_path):
@@ -442,6 +488,26 @@ def test_failed_results_never_replace_stored_dataset_entries(tmp_path):
     _merge_into_dataset_report([{"mode": "zkp", "success": False, "benchmark": None}], str(tmp_path), "healthcare")
 
     assert json.loads((tmp_path / "healthcare" / "comparison_report.json").read_text()) == stored
+
+
+def test_harness_stops_a_server_that_outlives_its_clients():
+    """audit/failmodes.md F-2: a stuck server is terminated after the grace period, not after 2.5 hours."""
+    import subprocess
+    import sys
+    import time
+
+    from fl.compare.experiment import _wait_for_server
+
+    stuck = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"], start_new_session=True)
+    t0 = time.monotonic()
+    reason = _wait_for_server(stuck, t0, server_timeout=0, grace=1)
+
+    assert "after every client exited" in reason
+    assert stuck.returncode not in (None, 0) and time.monotonic() - t0 < 15
+
+    finished = subprocess.Popen([sys.executable, "-c", "pass"], start_new_session=True)
+    assert _wait_for_server(finished, time.monotonic(), server_timeout=0, grace=30) is None
+    assert finished.returncode == 0
 
 
 def test_zkp_mode_is_not_run_without_a_healthy_proof_service(tmp_path, monkeypatch):

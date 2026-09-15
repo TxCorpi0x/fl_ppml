@@ -176,9 +176,11 @@ def clip_update_in_place(net, context: Dict) -> Tuple[Dict[str, np.ndarray], int
 
 
 def update_metrics(context) -> Dict:
+    """Clip status of the update just prepared; reported once, then cleared."""
     if not isinstance(context, dict) or "update_norm" not in context:
         return {}
-    return {"zkp_update_norm": float(context["update_norm"]), "zkp_update_clipped": int(bool(context["update_clipped"]))}
+    norm, clipped = context.pop("update_norm"), context.pop("update_clipped")
+    return {"zkp_update_norm": float(norm), "zkp_update_clipped": int(bool(clipped))}
 
 
 # ─────────────────────────────────────────────────────────────────────────────

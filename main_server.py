@@ -215,7 +215,9 @@ def main() -> None:
     # Load test data for server-side evaluation
     Loader = get_dataset_loader(config.dataset)
     config.num_classes = Loader.get_spec().num_classes
-    _, _, testloader = Loader().load(config)
+    # Clients partition the same data with the same seed; the largest shard's
+    # batch count sizes the ZKP update-norm bound (fl/core/update_bound.py).
+    trainloaders, _, testloader = Loader().load(config)
 
     mode = get_privacy_mode(mode_name)
     benchmark = (
@@ -223,7 +225,9 @@ def main() -> None:
         if args.benchmark
         else None
     )
-    strategy = make_strategy(config, mode, testloader, benchmark=benchmark)
+    strategy = make_strategy(
+        config, mode, testloader, benchmark=benchmark, client_batches=max(len(t) for t in trainloaders)
+    )
 
     print(f"Starting server [{mode_name}] at {server_address}")
     fl.server.start_server(

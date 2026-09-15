@@ -10,17 +10,41 @@ from fl.core import update_bound as ub
 from fl.core import zkp_gnark
 
 
-def test_bound_comes_from_calibration_times_epochs_unless_overridden(monkeypatch):
+def test_bound_scales_with_local_steps_unless_overridden(monkeypatch):
     monkeypatch.delenv("FL_ZKP_MAX_NORM", raising=False)
-    per_epoch = ub.PER_EPOCH_UPDATE_NORM["healthcare"]
-    assert ub.max_update_norm(NS(dataset="healthcare", local_epochs=3)) == pytest.approx(3 * per_epoch)
+    monkeypatch.setitem(ub.PER_STEP_UPDATE_NORM, "toy", 0.001)
+    # N-3: fewer clients → larger shards → more batches → a proportionally larger bound.
+    assert ub.max_update_norm(NS(dataset="toy", local_epochs=3, max_client_batches=10)) == pytest.approx(0.03)
+    assert ub.max_update_norm(NS(dataset="toy", local_epochs=1, max_client_batches=15)) == pytest.approx(0.015)
+    with pytest.raises(RuntimeError, match="batches per epoch"):
+        ub.max_update_norm(NS(dataset="toy", local_epochs=1))
     with pytest.raises(RuntimeError, match="no calibrated"):
-        ub.max_update_norm(NS(dataset="not-a-dataset", local_epochs=1))
+        ub.max_update_norm(NS(dataset="not-a-dataset", local_epochs=1, max_client_batches=5))
     monkeypatch.setenv("FL_ZKP_MAX_NORM", "0.25")
     assert ub.max_update_norm(NS(dataset="not-a-dataset", local_epochs=9)) == 0.25
     monkeypatch.setenv("FL_ZKP_MAX_NORM", "0")
     with pytest.raises(ValueError):
-        ub.max_update_norm(NS(dataset="healthcare", local_epochs=1))
+        ub.max_update_norm(NS(dataset="toy", local_epochs=1, max_client_batches=5))
+
+
+def test_strategy_derives_client_batches_for_the_bound(monkeypatch):
+    import torch
+
+    from fl.config import FLConfig
+    from fl.privacy.zkp import ZKPMode
+    from fl.server import make_strategy
+
+    monkeypatch.delenv("FL_ZKP_MAX_NORM", raising=False)
+    monkeypatch.setitem(ub.PER_STEP_UPDATE_NORM, "healthcare", 0.001)
+    config = FLConfig(dataset="healthcare", local_epochs=2, sim_mode=False, zkp_backend="gnark")
+    config.num_classes = 2
+    testloader = [(torch.zeros(4, 13), torch.zeros(4, dtype=torch.long))]
+    mode = ZKPMode()
+
+    strategy = make_strategy(config, mode, testloader, client_batches=12)
+
+    assert mode._max_update_norm == pytest.approx(0.001 * 2 * 12)
+    assert strategy.mode.fit_config(1) == {ub.FIT_CONFIG_KEY: str(mode._max_update_norm)}
 
 
 def test_client_refuses_to_prove_without_the_servers_bound():

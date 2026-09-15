@@ -215,7 +215,7 @@ Each is refused by the circuit itself. `elgamal_test.go` covers:
   - Clip status is reported per round (`zkp_update_norm`, `zkp_update_clipped`).
 - **Calibration** (`scripts/calibrate_update_norm.py`): plain FedAvg from the seeded initial model with harness hyperparameters, one epoch per round.
   - Healthcare, 3 clients, 5 rounds: largest honest update 0.021748, so the per-epoch bound is 1.5 × 0.021748 = **0.032623**.
-  - Other datasets are not calibrated yet. A ZKP mode on them refuses to start until a value is added or `FL_ZKP_MAX_NORM` is set.
+  - Other datasets were not calibrated at this point; see the N-3 fix below, which calibrates all five.
 - **ElGamal default scale 1000 → 10⁴.** At 1000, the rounding slack for healthcare (√2914/2 ≈ 27 units) was comparable to B·scale ≈ 33 units, so the proven bound would have been almost twice B. At 10⁴ the slack is 2.7 units against 326, i.e. B + 0.0027. The value range still allows |w| < 13.1.
 
 ### Found and fixed while re-running the benchmark
@@ -338,3 +338,63 @@ In the honest case above both clients were **clipped**: ‖agg − g‖ = 0.0323
 - **Consequence.** `B = per_epoch × local_epochs` is under-specified: honest update size scales with the number of **local steps** (epochs × batches per client), which depends on the client count, the partition and the batch size.
 - **The benchmark above is consistent with it.** It used 3 clients, matching the calibration, and admitted every client. Clipping status is not recorded (see the gap above), so this can't be confirmed.
 - **Not fixed in this commit.** Proposed fix: calibrate a per-step bound and set B = per_step × local steps. The server knows the local epochs and batch size; the per-client batch count would need to be reported or bounded by partition size. Alternatively, recalibrate per deployment configuration.
+
+## N-3 fix: the bound scales with local steps
+
+**Change** (`fl/core/update_bound.py`): B = `PER_STEP_UPDATE_NORM[dataset] × local_epochs × max_client_batches`.
+- The server computes `max_client_batches`, the largest per-client batch count, from the same partition clients use: same seed, client count, validation split and Dirichlet parameter. `main_server.py` and `fl/runner.py` pass it to `make_strategy(..., client_batches=...)`. A strategy built without it refuses to set a bound unless `FL_ZKP_MAX_NORM` is given.
+- **Calibration** (`scripts/calibrate_update_norm.py --clients 2,3,5 --rounds 3`) records ‖Δ‖ / steps for every client and round in each client count, and sets the per-step bound to KAPPA (1.5) × the maximum. It prints the headroom this leaves in each measured configuration.
+- **Clipping is now recorded.** Each `round_outcomes` entry carries `update_norms` (per client) and `clipped` (client ids). Sampled modes report it from the commit round, where the update is clipped (`fl/server.py::_record_round`).
+
+### Calibration results
+
+`--clients 2,3,5 --init-seeds 0,1,2,3,42 --rounds 3`, partition seed 42, one local epoch, harness batch size, lr 0.001. For each client count the table shows the largest honest update over all five initial models.
+
+| Dataset | Clients | Batches/client | Largest honest ‖Δ‖ | B at this config | Headroom |
+|---|---|---|---|---|---|
+| healthcare | 2 | 27 | 0.068313 | 0.102470 | 1.50 |
+| healthcare | 3 | 18 | 0.039871 | 0.068313 | 1.71 |
+| healthcare | 5 | 11 | 0.021834 | 0.041747 | 1.91 |
+| stock | 2 | 72 | 0.100194 | 0.194849 | 1.95 |
+| stock | 3 | 48 | 0.085385 | 0.129899 | 1.52 |
+| stock | 5 | 29 | 0.052321 | 0.078481 | 1.50 |
+| creditcard | 2 | 3205 | 2.078326 | 6.822758 | 3.28 |
+| creditcard | 3 | 2137 | 1.970154 | 4.549215 | 2.31 |
+| creditcard | 5 | 1282 | 1.819402 | 2.729103 | 1.50 |
+| mnist | 2 | 422 | 1.891221 | 5.447625 | 2.88 |
+| mnist | 3 | 282 | 1.872020 | 3.640356 | 1.95 |
+| mnist | 5 | 169 | 1.454421 | 2.181632 | 1.50 |
+| cifar10 | 2 | 352 | 0.856292 | 1.371808 | 1.60 |
+| cifar10 | 3 | 235 | 0.610558 | 0.915838 | 1.50 |
+| cifar10 | 5 | 141 | 0.333994 | 0.549503 | 1.65 |
+
+Per-step bounds: **healthcare 0.00379517, stock 0.00270624, creditcard 0.00212879, mnist 0.0129091, cifar10 0.00389718**. The legacy `cifar` dataset key has no entry, so ZKP modes refuse to start on it; use `cifar10`. Calibration read only the local `dataset/` directory. An earlier attempt with the default `./data/` path made torchvision download MNIST and part of CIFAR-10 into `./data/`, which is not used by the harness.
+
+### The initial model mattered as much as the step count
+
+A first calibration used only seed 42 and gave a healthcare per-step bound of 0.00208. A 2-client `zkp` smoke run then **clipped both honest clients** (‖Δ‖ = 0.0563 and 0.0587 against B = 0.0561). Nothing in the server or clients seeded the initial model, so every run started from a different random model, and the first update's size depends strongly on it: across five initial models the 2-client healthcare maximum is 0.0683, against 0.0354 for seed 42 alone.
+
+Two changes:
+- **`fl/server.py::make_strategy` seeds the initial model** with `config.seed`, so runs are reproducible.
+- **Calibration takes the maximum over several initial models**, so a run with a different seed isn't clipped.
+
+**Smoke test after the change** (healthcare, `zkp`, 2 clients, 2 rounds, harness):
+
+| Round | Admitted | Clipped | Update norms |
+|---|---|---|---|
+| 1 | 2 | none | 0.0698, 0.0699 |
+| 2 | 2 | none | 0.0578, 0.0591 |
+
+B = 0.00379517 × 27 = 0.1025, so neither round clips.
+
+**Not exactly reproducible.** Round 1's norms are about 2% above the largest the calibration observed for this configuration (0.0683). The calibration takes its sample batch after seeding, while `make_strategy` takes it before, and harness clients shuffle from unseeded generators. So the harness doesn't reproduce exactly the models and shuffles the calibration sampled. The five-seed sweep covers that variation, and KAPPA = 1.5 absorbed the remaining 2%. This is also why KAPPA should not be dropped to 1.
+
+### New observation N-4: update norm grows sublinearly with steps
+
+Per-step norms are not constant. On creditcard, with seed 42, they rise from 0.00062 (2 clients, 3205 steps) through 0.00086 (3 clients) to 0.00131 (5 clients, 1282 steps). On stock they go 0.00046 → 0.00071 → 0.00092. The multi-seed maxima show the same pattern. Gradients shrink as a client's model moves within an epoch, so doubling the steps doesn't double the update. Healthcare, with only 11–27 steps, stays close to constant (0.00119–0.00139).
+
+**Consequences of taking the maximum:**
+- **Honest clients are safe** in every calibrated configuration: headroom is at least 1.5 = KAPPA, reached at 5 clients.
+- **The bound is loose at many steps.** creditcard with 2 clients admits 3.28× the largest honest update, so an attacker there can move the model about 3× further per round than an honest client.
+- **Configurations with fewer steps than any calibrated one** (more clients, larger batches, smaller shards) can exceed the measured per-step maximum and clip honest clients. Clipping is now recorded, so this shows up in `round_outcomes`.
+- **Not addressed here.** A tighter fit, norm ∝ steps^α per dataset or calibrating the exact deployment configuration, would tighten the bound without clipping honest clients.

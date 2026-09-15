@@ -134,6 +134,35 @@ def _kill_port(port: int) -> None:
         pass
 
 
+def _wait_for_server(server_proc, server_start_ts: float, server_timeout: float, grace: float) -> Optional[str]:
+    """Wait for the server after all clients exited; terminate it if it outlives the grace period or the timeout.
+
+    Returns None if the server exited on its own, otherwise why it was stopped.
+    A terminated server has a non-zero return code, so the run is marked failed.
+    """
+    clients_done = time.monotonic()
+    reason = None
+    while server_proc.poll() is None:
+        now = time.monotonic()
+        if server_timeout > 0 and now - server_start_ts > server_timeout:
+            reason = f"server timeout after {now - server_start_ts:.0f}s"
+        elif now - clients_done > grace:
+            reason = f"server still running {now - clients_done:.0f}s after every client exited"
+        if reason:
+            try:
+                if hasattr(os, "killpg"):
+                    os.killpg(os.getpgid(server_proc.pid), signal.SIGTERM)
+                else:
+                    server_proc.terminate()
+                server_proc.wait(timeout=10)
+            except (subprocess.TimeoutExpired, ProcessLookupError):
+                server_proc.kill()
+                server_proc.wait(timeout=10)
+            return reason
+        time.sleep(0.5)
+    return None
+
+
 def _needs_gnark(mode_cfg: ModeConfig) -> bool:
     """Return True if this mode requires the gnark ZKP gRPC service."""
     if mode_cfg.internal_mode not in ("zkp", "he_zkp", "he_zkp_dp"):
@@ -685,31 +714,19 @@ def run_distributed(
             time.sleep(1.0)
 
     # ── wait for server ───────────────────────────────────────────────────
+    # Every client has exited by now. A server that doesn't follow within the
+    # grace period is stuck (audit/failmodes.md F-2: it waited in round-1
+    # evaluation for clients that had all failed, for over an hour).
+    grace = 60 if client_failures else int(os.environ.get("FL_SERVER_GRACE", "600"))
     print("\nWaiting for server to complete...")
     try:
-        while True:
-            ec = server_proc.poll()
-            if ec is not None:
-                print("[OK] Server completed")
-                break
-
-            if server_timeout > 0:
-                elapsed = time.monotonic() - float(server_start_ts)
-                if elapsed > server_timeout:
-                    print(f"⏱️  Server timeout after {elapsed:.0f}s! Terminating...")
-                    if hasattr(os, "killpg"):
-                        os.killpg(os.getpgid(server_proc.pid), signal.SIGTERM)
-                    else:
-                        server_proc.terminate()
-                    try:
-                        server_proc.wait(timeout=10)
-                    except subprocess.TimeoutExpired:
-                        server_proc.kill()
-                    break
-
-            time.sleep(1.0)
+        stop_reason = _wait_for_server(server_proc, server_start_ts, server_timeout, grace)
     finally:
         _unregister_proc(server_proc)
+    if stop_reason:
+        print(f"⏱️  {stop_reason}; server terminated")
+    else:
+        print("[OK] Server completed")
 
     # ── merge benchmarks ──────────────────────────────────────────────────
     server_bm = None

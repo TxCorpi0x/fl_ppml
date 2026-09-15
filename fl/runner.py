@@ -97,7 +97,9 @@ def run_mode(
     )
 
     # ── Strategy (server) ─────────────────────────────────────────────────────
-    strategy = make_strategy(mode_cfg, mode, testloader, benchmark=benchmark)
+    strategy = make_strategy(
+        mode_cfg, mode, testloader, benchmark=benchmark, client_batches=max(len(t) for t in trainloaders)
+    )
 
     # ── Client factory ────────────────────────────────────────────────────────
     def client_fn(cid: str):

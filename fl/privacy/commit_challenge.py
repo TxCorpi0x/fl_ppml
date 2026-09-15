@@ -106,14 +106,17 @@ class CommitChallengeMixin:
         raise RuntimeError(f"unknown protocol phase: {phase!r}")
 
     def post_fit_metrics(self, context, benchmark=None) -> Dict:
+        from fl.privacy.zkp import update_metrics
+
         cache = getattr(self, "_proof_cache", None)
         if not cache:
-            return {}
+            return update_metrics(context)  # commit round: the update was clipped here
         proofs, proof_bytes = cache
         return {
             "zkp_proofs_json": json.dumps(proofs),
             "gnark_num_proofs": len(proofs),
             "gnark_proof_bytes": proof_bytes,
+            **update_metrics(context),
         }
 
     # ── Server ────────────────────────────────────────────────────────────

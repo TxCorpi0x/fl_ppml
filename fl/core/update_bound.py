@@ -8,14 +8,21 @@ bound; the bound limits how far one admitted client can move the global model
 in a round, not in which direction.
 
 Choosing B
-    B = PER_EPOCH_UPDATE_NORM[dataset] × local_epochs
+    B = PER_STEP_UPDATE_NORM[dataset] × local_epochs × max_client_batches
 
-PER_EPOCH_UPDATE_NORM is KAPPA times the largest honest one-epoch update norm
-observed by ``scripts/calibrate_update_norm.py`` (plain FedAvg from the seeded
-initial model, harness hyperparameters). Scaling by epochs follows from the
-triangle inequality over per-epoch updates. Re-run the calibration when the
-model, learning rate, batch size or optimiser changes. ``FL_ZKP_MAX_NORM``
-overrides the table (it is an update norm, not a weight norm).
+An honest update grows with the number of optimiser steps, not with epochs:
+with fewer clients each shard is larger, so one epoch is more steps
+(audit/norm.md N-3). ``max_client_batches`` is the largest per-client batch
+count, which the server computes from the same partition clients use.
+PER_STEP_UPDATE_NORM is KAPPA times the largest honest ‖Δ‖ / steps observed by
+``scripts/calibrate_update_norm.py`` over several client counts and several
+initial models (plain FedAvg, harness hyperparameters). The initial model
+matters: ``make_strategy`` seeds it with the run's seed, and the first update's
+size depends on where training starts. Scaling by steps
+follows from the triangle inequality over per-step updates. Re-run the
+calibration when the model, learning rate, batch size or optimiser changes.
+``FL_ZKP_MAX_NORM`` overrides the table (it is an update norm, not a weight
+norm).
 
 Differential privacy adds noise to every step, so DP runs have larger honest
 updates; calibrate them separately and set ``FL_ZKP_MAX_NORM``.
@@ -30,11 +37,16 @@ import numpy as np
 
 KAPPA = 1.5
 
-# dataset → B for one local epoch. Source: scripts/calibrate_update_norm.py,
-# results recorded in audit/norm.md ("Calibration").
-PER_EPOCH_UPDATE_NORM = {
-    # 3 clients, 5 rounds, seed 42, batch 16, lr 0.001: max 0.021748
-    "healthcare": 0.032623,
+# dataset → B per local optimiser step. Source: scripts/calibrate_update_norm.py,
+# results recorded in audit/norm.md ("N-3 fix").
+PER_STEP_UPDATE_NORM: dict = {
+    # 2, 3, 5 clients × init seeds 0,1,2,3,42 × 3 rounds; partition seed 42,
+    # 1 local epoch, harness batch size and lr 0.001. KAPPA × max ‖Δ‖/step.
+    "healthcare": 0.00379517,
+    "creditcard": 0.00212879,
+    "stock": 0.00270624,
+    "mnist": 0.0129091,
+    "cifar10": 0.00389718,
 }
 
 FIT_CONFIG_KEY = "zkp_max_update_norm"
@@ -47,13 +59,19 @@ def max_update_norm(config) -> float:
         bound = float(override)
     else:
         dataset = getattr(config, "dataset", None)
-        if dataset not in PER_EPOCH_UPDATE_NORM:
+        if dataset not in PER_STEP_UPDATE_NORM:
             raise RuntimeError(
                 f"no calibrated ZKP update-norm bound for dataset {dataset!r}. Run "
                 f"scripts/calibrate_update_norm.py --dataset {dataset} and add it to "
                 "fl/core/update_bound.py, or set FL_ZKP_MAX_NORM"
             )
-        bound = PER_EPOCH_UPDATE_NORM[dataset] * max(1, int(getattr(config, "local_epochs", 1)))
+        batches = getattr(config, "max_client_batches", None)
+        if not batches:
+            raise RuntimeError(
+                "server does not know the clients' batches per epoch: build the strategy "
+                "with make_strategy(..., client_batches=...), or set FL_ZKP_MAX_NORM"
+            )
+        bound = PER_STEP_UPDATE_NORM[dataset] * max(1, int(getattr(config, "local_epochs", 1))) * int(batches)
     if not np.isfinite(bound) or bound <= 0:
         raise ValueError(f"update-norm bound must be positive, got {bound}")
     return bound

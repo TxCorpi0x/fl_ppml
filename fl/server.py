@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 from collections import OrderedDict
 from typing import Callable, Dict, List, Optional, Tuple, Union
 
@@ -106,6 +107,19 @@ class FedPrivate(fl.server.strategy.Strategy):
     def __repr__(self) -> str:
         return f"FedPrivate(mode={self.mode.name})"
 
+    def _wait_for_clients(self, client_manager: ClientManager, phase: str, server_round: int) -> None:
+        """Wait a bounded time for min_available_clients, then stop the run (audit/failmodes.md F-2).
+
+        Flower's own wait is 24 hours; after every client had exited, the server
+        sat in it until killed by hand. Raising ends the run with a clear error.
+        """
+        timeout = int(os.environ.get("FL_CLIENT_WAIT_TIMEOUT", "600"))
+        if not client_manager.wait_for(self.min_available_clients, timeout=timeout):
+            raise RuntimeError(
+                f"round {server_round} {phase}: only {client_manager.num_available()} of "
+                f"{self.min_available_clients} required clients available after {timeout}s; stopping the run"
+            )
+
     # ── Flower protocol ───────────────────────────────────────────────────────
 
     def initialize_parameters(
@@ -135,7 +149,7 @@ class FedPrivate(fl.server.strategy.Strategy):
     ) -> List[Tuple[ClientProxy, FitIns]]:
         # Size the sample only after min_available_clients have connected; sizing
         # it first sampled 2 of 3 clients in round 1 whenever one was still starting.
-        client_manager.wait_for(self.min_available_clients)
+        self._wait_for_clients(client_manager, "fit", server_round)
         sample_size, min_num = self.num_fit_clients(client_manager.num_available())
         clients = client_manager.sample(
             num_clients=sample_size, min_num_clients=min_num
@@ -238,6 +252,7 @@ class FedPrivate(fl.server.strategy.Strategy):
     ) -> List[Tuple[ClientProxy, EvaluateIns]]:
         if self.fraction_evaluate == 0.0 or not self.mode.evaluates_this_round(server_round):
             return []
+        self._wait_for_clients(client_manager, "evaluate", server_round)
         sample_size, min_num = self.num_evaluation_clients(
             client_manager.num_available()
         )
@@ -362,6 +377,15 @@ class FedPrivate(fl.server.strategy.Strategy):
                 "rejected": {},
             }
         report = {**report, "flower_failures": len(failures or [])}
+        # Update-bound clipping reported by clients (audit/norm.md): who was clipped and by how much.
+        norms = {
+            str(cp.cid): (float(fr.metrics["zkp_update_norm"]), bool(fr.metrics.get("zkp_update_clipped")))
+            for cp, fr in results or []
+            if fr.metrics and "zkp_update_norm" in fr.metrics
+        }
+        if norms:
+            report["update_norms"] = {cid: norm for cid, (norm, _) in norms.items()}
+            report["clipped"] = sorted(cid for cid, (_, clipped) in norms.items() if clipped)
         if report["outcome"] != "aggregated" or report["rejected"] or report["flower_failures"]:
             print(
                 f"[Round {server_round}] outcome={report['outcome']} admitted={len(report['admitted'])} "
@@ -461,6 +485,7 @@ def make_strategy(
     mode: PrivacyMode,
     testloader,
     benchmark=None,
+    client_batches: Optional[int] = None,
 ) -> FedPrivate:
     """
     Create a FedPrivate strategy for the given config and privacy mode.
@@ -475,6 +500,8 @@ def make_strategy(
         mode:       PrivacyMode plugin (already instantiated).
         testloader: Server-side test DataLoader.
         benchmark:  Optional BenchmarkMetrics.
+        client_batches: Largest per-client batch count per epoch, from the
+                    same partition clients use; sizes the ZKP update bound.
 
     Returns:
         A fully configured FedPrivate strategy ready for fl.server.start_server().
@@ -483,7 +510,12 @@ def make_strategy(
 
     device = torch.device(config.device)
     sample_batch = next(iter(testloader))
+    # A seeded initial model makes runs reproducible, and it is the global model
+    # the update-norm calibration measures from (audit/norm.md N-3).
+    torch.manual_seed(config.seed)
     central = get_model_for_batch(sample_batch, config.num_classes).to(device)
+    if client_batches:
+        config.max_client_batches = int(client_batches)
     server_context = mode.setup_server_context(config)
     mode.bind_server_model(server_context, central)
 

@@ -165,3 +165,19 @@ Every row that failed open in Phase 1 now either rejects, aborts with no ledger 
     - Pass a `round_timeout` to `ServerConfig` so a standalone server doesn't block forever.
 
   **Not yet implemented; needs approval, since it's outside Step 5's scope.**
+
+## F-2 fix (after Step 7)
+
+**Cause:** Flower's client-availability wait, not the round itself. `SimpleClientManager.sample()` calls `wait_for(min_num_clients)` with Flower's default timeout of 86,400 s. After every client had exited, the server sat in that wait during round-1 evaluation. A `round_timeout` would not have helped, because it only bounds a round that has already sampled clients.
+
+**Fixes:**
+- **Server** (`fl/server.py::FedPrivate._wait_for_clients`): `configure_fit` and `configure_evaluate` wait at most `FL_CLIENT_WAIT_TIMEOUT` seconds (default 600) for `min_available_clients`. If not enough clients arrive, they raise `RuntimeError("round N fit|evaluate: only k of m required clients available …; stopping the run")`, so the server exits with an error instead of blocking. The same wait also fixes the round-1 sampling race found in Step 7 (the sample is sized only after the wait).
+- **Harness** (`fl/compare/experiment.py::_wait_for_server`): once every client process has exited, the server gets a grace period: **60 s if any client failed**, otherwise `FL_SERVER_GRACE` (default 600 s) for final evaluation and saving. After that it is terminated. Its non-zero return code marks the mode failed. `FL_SERVER_TIMEOUT` still applies as an overall cap.
+
+**Effect on run B** (every client fails in round 1): the mode is reported failed about 60 s after the last client exits, instead of after the 9,000 s server timeout.
+
+**Tests** (`tests/test_fail_closed.py`):
+- `test_server_stops_instead_of_waiting_forever_for_departed_clients[fit|evaluate]`: a client manager whose clients never arrive makes the strategy raise, and it never samples.
+- `test_harness_stops_a_server_that_outlives_its_clients`: a real subprocess that never exits is terminated after the grace period and has a non-zero return code, while a server that exits on its own is left alone.
+
+**Not re-run end to end.** The forced-failure run B from Step 4 was not repeated; the behaviour is covered by the unit tests above.

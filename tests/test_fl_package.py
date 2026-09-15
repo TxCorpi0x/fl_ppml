@@ -130,16 +130,24 @@ def test_baseline_contexts():
     assert mode.setup_server_context(cfg) is None
 
 
-def test_dp_context_fallback():
+def test_dp_context_without_params_file_requires_explicit_epsilon():
+    import math
+
+    import pytest
+
     from fl.config import FLConfig
     from fl.privacy import get_privacy_mode
 
-    cfg = FLConfig(dp_params_path="/nonexistent/dp_params.pkl")
     mode = get_privacy_mode("dp")
+    # The default dp_epsilon is the "load from file" sentinel; silently using it
+    # weakened the privacy budget.
+    with pytest.raises(FileNotFoundError):
+        mode.setup_client_context(FLConfig(dp_params_path="/nonexistent/dp_params.json"))
+
+    cfg = FLConfig(dp_params_path="/nonexistent/dp_params.json", dp_epsilon=1.0)
     ctx = mode.setup_client_context(cfg)
-    # Should fall back to config values rather than raising
-    assert ctx is not None
-    assert hasattr(ctx, "epsilon")
+    assert ctx.epsilon == 1.0
+    assert math.isclose(ctx.noise_multiplier, math.sqrt(2 * math.log(1.25 / cfg.dp_delta)))
 
 
 # ── Custom mode registration test ─────────────────────────────────────────────

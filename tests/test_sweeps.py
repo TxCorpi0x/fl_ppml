@@ -48,7 +48,7 @@ def _make_config(**kwargs):
     defaults = dict(
         dataset="creditcard",
         privacy_mode="dp",
-        dp_params_path="keys/dp/dp_params.pkl",
+        dp_params_path="keys/dp/dp_params.json",
     )
     defaults.update(kwargs)
     return FLConfig(**defaults)

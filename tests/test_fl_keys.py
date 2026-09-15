@@ -130,7 +130,7 @@ check("tenseal_alias", t_alias)
 def t_dp_roundtrip():
     from fl.keys.dp import generate, load
 
-    with tempfile.NamedTemporaryFile(suffix=".pkl", delete=False) as tf:
+    with tempfile.NamedTemporaryFile(suffix=".json", delete=False) as tf:
         tmp = tf.name
     try:
         p = generate(output=tmp, epsilon=2.5, delta=1e-6, overwrite=True)
@@ -148,7 +148,7 @@ check("dp_roundtrip", t_dp_roundtrip)
 def t_overwrite_protection():
     from fl.keys.dp import generate
 
-    with tempfile.NamedTemporaryFile(suffix=".pkl", delete=False) as tf:
+    with tempfile.NamedTemporaryFile(suffix=".json", delete=False) as tf:
         tmp = tf.name
     try:
         generate(output=tmp, overwrite=True)
@@ -169,7 +169,7 @@ def t_missing_file():
     from fl.keys.dp import load
 
     try:
-        load("/nonexistent/dp_params.pkl")
+        load("/nonexistent/dp_params.json")
         raise AssertionError("should have raised FileNotFoundError")
     except FileNotFoundError:
         pass
@@ -221,23 +221,23 @@ def t_default_paths():
 
     cfg = FLConfig()
     assert (
-        cfg.he_tenseal_secret_path == "keys/he_tenseal/secret_key.pkl"
+        cfg.he_tenseal_secret_path == "keys/he_tenseal/secret_context.bin"
     ), cfg.he_tenseal_secret_path
     assert (
-        cfg.he_tenseal_public_path == "keys/he_tenseal/public_key.pkl"
+        cfg.he_tenseal_public_path == "keys/he_tenseal/public_context.bin"
     ), cfg.he_tenseal_public_path
-    assert cfg.zkp_params_path == "keys/zkp/zkp_params.pkl", cfg.zkp_params_path
-    assert cfg.dp_params_path == "keys/dp/dp_params.pkl", cfg.dp_params_path
+    assert cfg.zkp_params_path == "keys/zkp/zkp_params.json", cfg.zkp_params_path
+    assert cfg.dp_params_path == "keys/dp/dp_params.json", cfg.dp_params_path
 
     sig_ts = inspect.signature(he_tenseal.generate)
-    assert sig_ts.parameters["secret_path"].default == "keys/he_tenseal/secret_key.pkl"
-    assert sig_ts.parameters["public_path"].default == "keys/he_tenseal/public_key.pkl"
+    assert sig_ts.parameters["secret_path"].default == "keys/he_tenseal/secret_context.bin"
+    assert sig_ts.parameters["public_path"].default == "keys/he_tenseal/public_context.bin"
 
     sig_dp = inspect.signature(dp.generate)
-    assert sig_dp.parameters["output"].default == "keys/dp/dp_params.pkl"
+    assert sig_dp.parameters["output"].default == "keys/dp/dp_params.json"
 
     sig_zkp = inspect.signature(zkp.generate)
-    assert sig_zkp.parameters["output"].default == "keys/zkp/zkp_params.pkl"
+    assert sig_zkp.parameters["output"].default == "keys/zkp/zkp_params.json"
 
     # Legacy Concrete-ML config module removed; no concrete.generate() available.
 

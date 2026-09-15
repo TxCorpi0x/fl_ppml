@@ -222,6 +222,11 @@ dataset/
 
 # Keys
 keys/
+# Pinned Groth16 verifying keys and manifest are committed (docs/ZKP.md, section 7);
+# proving keys live in a local cache outside the repository.
+!zkp_gnark_service/keys/
+# Key-management source code, not key material.
+!fl/keys/
 
 # ZKP
 gnark_service

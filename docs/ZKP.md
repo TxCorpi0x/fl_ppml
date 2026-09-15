@@ -1,1916 +1,473 @@
-# Zero-Knowledge Proofs — Deep Conceptual Guide
-
-> **Navigation**: [README.md](README.md) | [ZKP.md](ZKP.md) | [ZKP.md](ZKP.md) | [FHE.md](FHE.md)
-
-## Table of Contents
-
-1. [What is a Zero-Knowledge Proof?](#1-what-is-a-zero-knowledge-proof)
-2. [The Three Defining Properties](#2-the-three-defining-properties)
-3. [Historical Context and Intellectual Significance](#3-historical-context-and-intellectual-significance)
-4. [Mathematical Foundations](#4-mathematical-foundations)
-5. [Proof System Taxonomy](#5-proof-system-taxonomy)
-6. [ZKP in Machine Learning](#6-zkp-in-machine-learning)
-7. [ZKP in Federated Learning](#7-zkp-in-federated-learning)
-8. [Pedersen Commitments — Deep Dive](#8-pedersen-commitments--deep-dive)
-9. [gnark and Groth16 zk-SNARKs — Deep Dive](#9-gnark-and-groth16-zk-snarks--deep-dive)
-10. [Pedersen vs Groth16: A Conceptual Comparison](#10-pedersen-vs-groth16-a-conceptual-comparison)
-11. [Security Model and Limitations](#11-security-model-and-limitations)
-12. [Further Reading](#12-further-reading)
-
----
-
-## 1. What is a Zero-Knowledge Proof?
-
-A **zero-knowledge proof** (ZKP) is a cryptographic protocol between two parties — a *prover* and a *verifier* — in which the prover convinces the verifier that a certain statement is true, while the verifier learns nothing beyond the bare fact of the statement's truth. No evidence, no witnesses, no intermediate values, no auxiliary information leaks out of the proof. The verifier is convinced, but enlightened by nothing.
-
-To understand why this is non-trivial, consider the contrast with conventional proofs. A mathematical proof of a theorem reveals the *argument* — the chain of logical steps that produces the conclusion. Anyone who reads it gains understanding. A court witness who proves they were at a particular location at a particular time typically reveals that location to the court, to the opposing counsel, and to the public record. In ordinary epistemology, knowledge flows alongside proof: you prove something by sharing the evidence that makes it true, and the evidence teaches something.
-
-Zero-knowledge proofs break this coupling. The prover possesses a *witness* — a private piece of information that makes the statement true — and generates a proof that cryptographically commits to the statement's validity without transmitting, hinting at, or statistically leaking any information about the witness itself. The verifier can check the proof efficiently and conclude, with overwhelming probability, that the statement is true and that the prover genuinely knows a valid witness — yet learns nothing about what that witness is.
-
-The canonical example used to build the intuition is the **Ali Baba cave** (Quisquater et al., 1989). Imagine a circular cave with a single entrance and a door in the middle guarded by a password. Peggy (the prover) claims to know the password; Victor (the verifier) wants to be convinced without learning the password himself. They arrange a protocol: Victor waits at the entrance while Peggy walks into the cave, randomly choosing to enter from the left or right path. Victor then shouts either "come out from the left" or "come out from the right." If Peggy knows the password, she can always comply — she uses the door when necessary. If she does not know the password, she can only comply if Victor's instruction matches the path she originally entered. By repeating this many times, the probability that Peggy consistently guesses correctly by luck becomes negligible, while Victor learns nothing about the password beyond the fact that Peggy knows it.
-
-This cave analogy captures the core intuition: the prover demonstrates knowledge by correctly responding to challenges that would be impossible to consistently meet without the private knowledge, while the challenges and responses themselves contain no information about what that knowledge is.
-
----
-
-## 2. The Three Defining Properties
-
-Every zero-knowledge proof system is formally characterized by three properties. These are not engineering goals but mathematical definitions that must be precisely satisfied for a protocol to constitute a genuine zero-knowledge proof.
-
-### 2.1 Completeness
-
-*If the statement is true and both parties follow the protocol honestly, the verifier accepts the proof with probability 1 (or overwhelming probability close to 1).*
-
-Completeness is the correctness requirement. It ensures that an honest prover who genuinely knows the witness can always generate a proof that the verifier accepts. Without completeness, a proof system would be useless — even legitimate provers could fail to convince verifiers. A system is *perfectly complete* if acceptance probability is exactly 1, and *statistically complete* if it is $1 - \text{negl}(\lambda)$ for a security parameter $\lambda$.
-
-### 2.2 Soundness
-
-*If the statement is false, no cheating prover (however computationally powerful) can convince the honest verifier to accept, except with negligible probability.*
-
-Soundness is the security requirement. It ensures the proof system cannot be gamed — a prover who does not actually know a valid witness cannot fabricate a convincing proof. The **soundness error** $\delta$ is the probability that an invalid proof passes verification. For a proof system to be useful, $\delta$ must be negligibly small (typically $2^{-128}$).
-
-**Knowledge soundness** is a stronger variant: not only must the statement be true, but there must exist an *extractor* algorithm that, given black-box oracle access to a cheating prover, can efficiently extract a valid witness. If the prover convinces the verifier, the prover must "know" a witness in a computationally meaningful sense. This stronger property is required for zk-SNARKs and is what makes them useful for proving program execution rather than just the existence of a solution.
-
-### 2.3 Zero-Knowledge
-
-*The verifier learns nothing from the proof beyond the truth of the statement — formally, there exists a polynomial-time simulator that can generate transcripts indistinguishable from real proof transcripts without access to the witness.*
-
-The zero-knowledge property is defined via the **simulator paradigm**. Consider a hypothetical "fake" prover that does not know the witness but has access to a "magic" ability: it can see the verifier's random challenges before sending its messages. Using this ability, the simulator can generate proof transcripts that are computationally (or statistically, or perfectly) indistinguishable from real ones. Since the simulator produces these transcripts without any witness, and they look identical to real proofs, it follows that the real proofs leak nothing about the witness — any information the verifier could extract from a real proof, it could also produce itself via the simulator.
-
-There are graded levels of zero-knowledge:
-- **Perfect zero-knowledge**: the simulated transcripts are identically distributed to real ones
-- **Statistical zero-knowledge**: the distributions are statistically indistinguishable (differ by a negligible amount in total variation distance)
-- **Computational zero-knowledge**: the distributions are computationally indistinguishable — no polynomial-time adversary can distinguish them with non-negligible advantage
-
-For practical cryptographic applications, computational zero-knowledge under standard hardness assumptions is sufficient.
-
----
-
-## 3. Historical Context and Intellectual Significance
-
-Zero-knowledge proofs were introduced by Goldwasser, Micali, and Rackoff in their 1985 paper "The Knowledge Complexity of Interactive Proof Systems," which won the Gödel Prize in 1993 and the ACM Turing Award in 2012. The paper introduced not only zero-knowledge proofs but the complexity classes IP (Interactive Proofs) and, implicitly, the notion of "knowledge complexity" — a quantitative measure of how much knowledge a proof system reveals. The result that knowledge complexity zero is achievable — that some statements can be proven while revealing zero additional knowledge — was a foundational surprise.
-
-The theoretical importance of zero-knowledge proofs extends well beyond their practical applications. The subsequent work of Gmali, Goldreich, Wigderson (1987) showed that every language in **NP** has a zero-knowledge proof system — an astonishing result meaning that any mathematical statement whose correctness can be efficiently verified can also be proven in zero-knowledge. This result, achieved by showing how to prove graph 3-colorability in zero-knowledge (and reducing all NP problems to it), established that zero-knowledge proofs are not a niche curiosity but a foundational tool of computational complexity theory.
-
-For practical cryptography, the critical development was the **Fiat-Shamir heuristic** (1986), which showed how to convert interactive zero-knowledge protocols into non-interactive ones by replacing the verifier's random challenges with the output of a cryptographic hash function. Non-interactivity is essential for public deployment: the prover generates a single self-contained proof object, sends it to any number of verifiers, and each verifier checks it independently without any back-and-forth protocol. This transformation made zero-knowledge proofs logistically practical.
-
-The modern era of zero-knowledge proof deployment began in earnest around 2010–2016, driven by the invention of **zk-SNARKs** (Succinct Non-interactive Arguments of Knowledge) that achieved extremely short proofs and constant-time verification. The landmark theoretical work by Groth (2010), Bitansky et al. (2012), and ultimately Groth (2016) produced the Groth16 protocol still in widespread production use today. Simultaneously, the Ethereum community's interest in blockchain-based computation created a powerful practical incentive for efficient ZKP systems, leading to an explosion of library development, protocol research, and production deployment that continues today.
-
-What makes this history striking is that zero-knowledge proofs went from being a purely theoretical curiosity — a definition in a complexity theory paper — to a deployed production technology in major blockchain systems, federated learning frameworks, and privacy-preserving computation platforms within roughly 30 years. The pace of development accelerated dramatically once practical efficiency was achieved.
-
----
-
-## 4. Mathematical Foundations
-
-### 4.1 Languages, Witnesses, and NP
-
-The formal setting for zero-knowledge proofs is the theory of computational complexity, specifically the class NP. An **NP language** $L$ is a set of strings such that membership in $L$ can be *verified* efficiently (in polynomial time) given a short *witness*. Formally:
-
-$$L \in \text{NP} \iff \exists \text{ poly-time verifier } V \text{ s.t. } x \in L \iff \exists w : |w| \leq \text{poly}(|x|) \land V(x, w) = 1$$
-
-In this framework, $x$ is the **statement** (also called the instance or public input) and $w$ is the **witness** (also called the secret input or private input). The zero-knowledge proof allows the prover (who knows $w$) to convince the verifier (who knows only $x$) that $x \in L$, while revealing nothing about $w$.
-
-For ZKP in machine learning, the statement might be: "There exists a gradient vector $w$ whose $\ell_2$ norm does not exceed the bound $B$ and whose MiMC hash equals the committed value $C$." The witness is the actual gradient vector. The verifier checks the proof commits to a valid gradient without learning the gradient values.
-
-### 4.2 Commitment Schemes
-
-A **commitment scheme** is a fundamental building block of zero-knowledge proof systems. It allows a prover to "commit" to a value — essentially locking it in a sealed envelope — while keeping the value hidden from the verifier. Later, the prover can "open" the commitment to reveal the value, and the verifier can check that the revealed value matches the original commitment.
-
-A commitment scheme $\text{Commit}(m, r) \to C$ takes a message $m$ and a random blinding factor $r$, and produces a commitment $C$. It must satisfy two properties:
-
-**Hiding**: The commitment $C$ reveals no information about $m$. Even an adversary who sees $C$ and knows the distribution of possible messages cannot determine $m$. This is analogous to the sealed envelope: you cannot see through it.
-
-**Binding**: Once the commitment $C$ is published, the committer cannot "change their mind" — they cannot find a different value $m'$ and blinding factor $r'$ such that $\text{Commit}(m', r') = C$. The commitment binds the prover to their original choice. This is analogous to the envelope being tamper-evident: breaking the seal would be detectable.
-
-The tension between these properties is fundamental. Perfect hiding requires that $C$ be independent of $m$, but perfect binding requires that $C$ uniquely determines $m$. These two conditions cannot simultaneously hold with perfect security (this impossibility is proven by information-theoretic arguments), so practical commitment schemes achieve one perfectly and the other computationally — that is, secure against polynomial-time adversaries under hardness assumptions.
-
-### 4.3 Arithmetic Circuits and R1CS
-
-The most practical realization of NP computations for ZKP purposes uses **arithmetic circuits** — directed acyclic graphs where wires carry values from a finite field $\mathbb{F}_p$, and gates compute addition and multiplication over that field. Any computation — including neural network inference, hash functions, norm computations — can be expressed as an arithmetic circuit over an appropriate field.
-
-The **Rank-1 Constraint System (R1CS)** is an equivalent formulation that is particularly amenable to zk-SNARK construction. An R1CS instance consists of three matrices $A, B, C \in \mathbb{F}_p^{m \times n}$. A witness vector $\mathbf{z} \in \mathbb{F}_p^n$ satisfies the R1CS if:
-
-$$A\mathbf{z} \circ B\mathbf{z} = C\mathbf{z}$$
-
-where $\circ$ denotes the Hadamard (componentwise) product. Each row of this matrix equation represents a single multiplication gate constraint of the form $(a_i \cdot \mathbf{z})(b_i \cdot \mathbf{z}) = c_i \cdot \mathbf{z}$. The total number of rows (constraints) is the "size" of the circuit and directly determines the computational cost of proving. In this framework, the gradient norm-bounding circuit produces approximately 32,000 R1CS constraints for 100 gradient coordinates.
-
-### 4.4 Bilinear Pairings and Elliptic Curves
-
-Modern zk-SNARKs like Groth16 are built on **bilinear pairings** — a special algebraic structure on elliptic curves. A bilinear pairing is a map $e: \mathbb{G}_1 \times \mathbb{G}_2 \to \mathbb{G}_T$ between three groups of prime order $p$, satisfying:
-
-$$e(aP, bQ) = e(P, Q)^{ab} \quad \forall P \in \mathbb{G}_1, Q \in \mathbb{G}_2, a, b \in \mathbb{Z}_p$$
-
-This bilinearity is the algebraic miracle that makes constant-size proofs possible. A prover can commit to a polynomial of arbitrary degree using a single group element, and verifiers can check polynomial identities using pairing equations without learning the polynomial itself. The **BN254** elliptic curve (the Barreto-Naehrig curve at the 254-bit prime), used by gnark in this framework, provides approximately 128 bits of classical security while admitting efficient pairing computation.
-
-The security of pairing-based schemes rests on assumptions like the **Computational Diffie-Hellman** (CDH) assumption in $\mathbb{G}_1$ and $\mathbb{G}_2$, and the **Bilinear Diffie-Hellman** (BDH) assumption in the pairing group. These are believed hard classically but are not post-quantum secure — a sufficiently large quantum computer running Shor's algorithm could break them.
-
-### 4.5 ZK-Friendly Hash Functions
-
-Standard cryptographic hash functions (SHA-256, SHA-3, Blake2) are designed for efficient computation in software. However, inside an arithmetic circuit over $\mathbb{F}_p$, bitwise operations (XOR, AND, shifts) are extremely expensive — each bit operation may cost dozens of field multiplications. A 256-bit SHA-256 computation may require 20,000–50,000 R1CS constraints, making it impractical as a commitment function inside a ZKP circuit.
-
-**ZK-friendly hash functions** are designed specifically for efficient representation as arithmetic circuits. **MiMC** (Minimal Multiplicative Complexity, Albrecht et al., 2016) hashes data using a series of field multiplications and additions, avoiding bitwise operations entirely. A single MiMC round computes $(x + c_i)^3$ over the field, and 110–220 such rounds provide cryptographic security. The total cost is approximately 300–500 R1CS constraints per MiMC invocation — roughly 100 times fewer than SHA-256.
-
-MiMC is the commitment hash used in this framework's gnark circuit. For each sampled gradient coordinate, the coordinate value is quantized to a field element and passed through MiMC, building up a hash chain. The final hash output is the public commitment value $C$ included in the proof. Verifying that the prover knows the preimage of $C$ establishes that they are committing to a specific, fixed gradient vector.
-
----
-
-## 5. Proof System Taxonomy
-
-Understanding where Groth16 and Pedersen commitments fit requires a map of the proof system landscape.
-
-### 5.1 Interactive Proof Protocols (Sigma Protocols)
-
-The earliest and simplest zero-knowledge proof protocols are **sigma protocols** — three-message interactive protocols characterized by the $\Sigma$-shaped flow of messages:
-
-1. **Commitment** ($a$): The prover generates a random nonce, applies a function to it, and sends the result to the verifier
-2. **Challenge** ($e$): The verifier sends a uniformly random challenge from a challenge space
-3. **Response** ($z$): The prover computes a response using both the nonce and their private witness
-
-The classic example is the **Schnorr identification protocol**, which proves knowledge of a discrete logarithm. If a prover knows $x$ such that $g^x = y$ (where $g$ is a group generator and $y$ is the public value), they choose random $r$, send $a = g^r$, receive challenge $e$, and respond with $z = r + xe$. A verifier checks $g^z = a \cdot y^e$. An honest prover always passes; a cheating prover without knowledge of $x$ can only pass if they predicted $e$ before choosing $a$, which they cannot do if $e$ is truly random and independent of $a$.
-
-Sigma protocols are efficient and elegant but are *interactive* — they require the verifier to be online and participating during the proof. This makes them unsuitable for asynchronous or one-to-many proof scenarios.
-
-### 5.2 The Fiat-Shamir Transform
-
-The **Fiat-Shamir heuristic** (1986) converts any sigma protocol into a **non-interactive** zero-knowledge proof by replacing the verifier's random challenge with the output of a cryptographic hash function applied to all prior messages. Instead of waiting for a random challenge from the verifier, the prover computes:
-
-$$e = H(a, x)$$
-
-where $H$ is a hash function (modeled as a random oracle), $a$ is the prover's commitment message, and $x$ is the statement being proven. This produces a self-contained proof $\pi = (a, z)$ that anyone can verify by recomputing $e = H(a, x)$ and checking the response equation.
-
-The security of Fiat-Shamir proofs relies on the **random oracle model** — a theoretical idealization in which the hash function outputs truly random values for every distinct input. In practice, SHA-256 or BLAKE2 are used and the random oracle assumption is accepted as a pragmatic approximation. Fiat-Shamir makes sigma protocols non-interactive and widely deployable, and is the basis for many signature schemes (Schnorr signatures) and modern proof systems.
-
-### 5.3 zk-SNARKs (Succinct Non-interactive Arguments of Knowledge)
-
-**zk-SNARKs** are proof systems satisfying demanding efficiency requirements simultaneously:
-
-- **Succinct**: The proof size is sublinear in the witness size — typically $O(1)$ or $O(\log n)$ field elements, regardless of the circuit size $n$
-- **Non-interactive**: The proof is a single message requiring no interaction
-- **Argument**: Soundness holds computationally (against bounded adversaries), not information-theoretically
-- **Knowledge**: The prover must "know" a witness — knowledge extractability holds
-
-A zk-SNARK produced by Groth16 for a circuit with $10^6$ constraints consists of exactly 3 elliptic curve points (about 192 bytes), and verification requires exactly 3 pairing operations regardless of circuit size. This constant-size, constant-time property is what makes SNARKs so valuable for applications where verification is a bottleneck.
-
-### 5.4 zk-STARKs and Alternative Systems
-
-**zk-STARKs** (Scalable Transparent ARguments of Knowledge) avoid pairings entirely, using hash functions and algebraic intermediate representations. Their key advantages are transparency (no trusted setup required) and post-quantum security (security based only on collision resistance of hash functions). Their disadvantages are larger proof sizes (tens of kilobytes versus hundreds of bytes) and slower verification. For this framework's FL use case, Groth16's smaller proofs and faster verification are preferable; STARKs would be preferable in a setting where trusted setup is infeasible and post-quantum security is required.
-
-Other notable proof systems include **PLONK** (a universal and updatable SRS system), **Bulletproofs** (no trusted setup, linear verification), and **Nova** (recursive folding for incremental computation). The ZKP field is rapidly evolving, with new systems achieving better trade-offs in proof size, prover time, verifier time, and trust assumptions.
-
----
-
-## 6. ZKP in Machine Learning
-
-Zero-knowledge proofs appear in machine learning in several distinct roles, each addressing a different aspect of the trust gap between data owners, model trainers, and model users.
-
-### 6.1 Verifiable Inference
-
-The **verifiable inference** problem asks: given a public model and a public input, can a model provider prove that the declared output is the genuine output of running the model on the input — without the verifier re-running the entire model? This is relevant when inference is computationally expensive (large language models, high-resolution image classifiers) and users want to verify results without redundant computation. A ZKP proof of model execution provides cryptographic assurance that the server ran the claimed model, not a simpler or biased alternative.
-
-Verifiable inference is technically challenging because neural network forward passes involve non-linear operations (ReLU, softmax, normalization) that are expensive to encode in arithmetic circuits. Recent work (zkml, EZKL, Gizatech) has demonstrated zk-SNARKs for ResNet-class models, though proving times remain high (minutes to hours for large models).
-
-### 6.2 Verifiable Training
-
-**Verifiable training** proofs convince a verifier that a model was trained on a specific dataset, following a specific training procedure, for a certain number of steps. This is relevant for regulatory compliance (a medical AI must be trained on approved data), for model auditing (proving a model was not fine-tuned on malicious data), and for federated learning (proving that local training was performed faithfully).
-
-Verifiable training is substantially harder than verifiable inference because training involves gradient descent over thousands of steps, resulting in circuits with billions of constraints — currently at the frontier of ZKP research.
-
-### 6.3 Privacy-Preserving Training Certificates
-
-A more tractable variant is the **training certificate** approach: rather than proving the entire training procedure, prove structural properties of the model update — that the update's norm is bounded, that it is consistent with a committed input distribution, or that it does not contain outliers. This selective approach targets the most security-relevant properties while remaining computationally feasible. This is precisely the approach taken by this framework's gnark ZKP implementation.
-
-### 6.4 Membership Proof and Exclusion Proofs
-
-Zero-knowledge proofs can establish that a data point satisfies some predicate (is in a certain range, belongs to a certain category) without revealing the data point itself. In ML contexts, this enables clients to prove their training data meets quality or regulatory criteria without exposing private training records. Such proofs are beginning to appear in medical AI contexts where training data provenance is subject to audit requirements.
-
----
-
-## 7. ZKP in Federated Learning
-
-### 7.1 The Integrity Problem in Federated Learning
-
-Federated learning distributes model training across many clients, each of which trains locally and contributes gradient updates. The aggregation server combines these updates (typically via FedAvg) to produce a global model. This architecture creates a fundamental trust asymmetry: the server must aggregate contributions from clients it cannot directly observe, and any single client can unilaterally undermine the system.
-
-**Gradient poisoning** is the primary attack vector. A malicious client — one of the participating clients controlled by an adversary — can submit a gradient update that is not the product of honest training. It might submit a gradient crafted to steer the global model toward a backdoor behavior (triggering misclassification on inputs with a specific pattern), to reduce the model's accuracy on a targeted subpopulation, or simply to corrupt the model by injecting arbitrarily large gradient values. Crucially, gradient poisoning does not require breaking any cryptographic primitive — the attacker simply sends a crafted message, and the server, not knowing the true gradient, cannot distinguish it from a legitimate one.
-
-Homomorphic encryption, as used in the `he_tenseal` and `he_concrete_tfhe` modes, addresses the confidentiality dimension of FL security: it prevents the server from reading gradient values. But it does nothing about integrity. A malicious client that encrypts a poisoned gradient produces an encrypted poisoned gradient. The server aggregates it without ever detecting the poison. Encryption and integrity are orthogonal security properties, and FHE addresses only the former.
-
-### 7.2 How ZKP Addresses Integrity
-
-Zero-knowledge proofs address the integrity problem by requiring each client to produce a cryptographic proof alongside its gradient update — a proof that the submitted gradient satisfies certain structural constraints. The server verifies this proof before including the gradient in aggregation. A poisoned gradient that violates the proven constraints causes the proof to fail. A poisoned gradient that somehow satisfies the constraints (within the norm bound and with a valid hash preimage) is still accepted, but the norm bound constraint significantly limits the damage such an update can cause.
-
-The key insight is that the proof can simultaneously: (a) commit the client to a specific gradient vector, so they cannot change it after seeing other clients' updates; (b) prove that the gradient's $\ell_2$ norm is bounded, preventing outlier attacks; and (c) reveal nothing about the gradient's actual values to the server, preserving privacy.
-
-This is the elegant combination that makes ZKP valuable in FL: it enforces integrity constraints on encrypted or private data without requiring the verifier to see the data.
-
-### 7.3 The ZKP-FL Protocol in This Framework
-
-At each training round in the `zkp_sampled` mode, the following sequence occurs for each client. The client completes local training and computes its gradient update vector $\Delta w$. Rather than proving properties of the full gradient (potentially millions of parameters), the client samples a fixed-size subset of $k = 100$ coordinates, where the sampling is deterministic — seeded by the round number and client identifier — so the server can verify which coordinates were included. This sampling is the key efficiency lever: proving 100 coordinates takes approximately 22 seconds, while proving millions would take hours.
-
-For the sampled coordinates, the client computes a **MiMC hash commitment** — a field-element $C$ encoding the hash of the sampled values in a ZK-friendly arithmetic form. The client then calls the gnark proof service, which executes the Groth16 prover on the gradient circuit. This circuit encodes two claims simultaneously: first, that the prover knows a preimage of $C$ (the sampled gradients hash to $C$); second, that the $\ell_2$ norm of those gradients does not exceed the declared bound (norm boundedness). The output is a Groth16 proof $\pi$ of approximately 192 bytes — constant size regardless of how many constraints the circuit contains.
-
-The client transmits its gradient update $\Delta w$, the commitment $C$, and the proof $\pi$ to the server. The server calls the gnark verification endpoint for each client's proof. Verification requires checking three pairing equations on the BN254 curve — a constant-time operation taking approximately 80 milliseconds regardless of the original circuit size. The server rejects any client whose proof fails verification and proceeds to FedAvg aggregation over only the verified updates.
-
-### 7.4 Security Properties of the Protocol
-
-The norm-bounding ZKP provides the following formal guarantees. First, **commitment binding**: a client cannot change their gradient after committing to $C$, because finding a second preimage for MiMC requires breaking its collision resistance. This prevents "last-look" attacks where a client waits to see partial aggregation results and adjusts its update accordingly.
-
-Second, **norm soundness**: the Groth16 proof's soundness guarantee ensures that no computationally bounded prover can generate a valid proof for a gradient that violates the norm bound. The norm bound prevents a single malicious client from dominating the global update — if each honest client's gradient has norm at most $B$, the malicious client also cannot contribute more than $B$ per coordinate. For $n$ honest clients and 1 malicious client, the malicious client's contribution to the aggregate is bounded to $1/n$ of the honest contribution (in norm).
-
-Third, **zero-knowledge**: the proof reveals nothing about the gradient values beyond what the commitment and proof imply. The server learns that the norm is bounded — a single bit of information — and that the gradient commits to $C$. It does not learn the actual gradient direction, magnitude distribution, or any other property. This zero-knowledge property is what allows combining ZKP with plaintext gradient transmission: in the `zkp_sampled` mode, the server sees the gradients in plaintext but the ZKP still ensures their authenticity. In the `he_tenseal_zkp` and `he_concrete_tfhe_zkp` modes, ZKP is layered on top of homomorphic encryption — the server sees only encrypted gradients and a proof that those gradients (whatever they are) satisfy the norm bound.
-
-### 7.5 Sampling and Statistical Security
-
-The use of sampling introduces a probabilistic security dimension. The adversary knows their full gradient update but does not know which $k$ coordinates will be sampled before submitting the proof (because the sampling seed incorporates the round number and other values determined after the adversary commits). If the malicious gradient violates the norm bound in some coordinates but satisfies it in others, they cannot selectively corrupt only the non-sampled coordinates without risk: with probability $k/n_{\text{params}}$, at least one corrupted coordinate will be in the sample, causing proof failure.
-
-For a gradient with $10^5$ parameters and $k = 100$ sampled, the probability that a uniform poisoning attack corrupts at least one sampled coordinate is $1 - (1 - 100/100000)^{n_{\text{poisoned}}} \approx 1 - e^{-n_{\text{poisoned}}/1000}$. Poisoning 1,000 coordinates gives 63% detection probability; poisoning 5,000 gives 99.3%. This statistical guarantee is not as strong as full-gradient proving, but is practically sufficient and makes the approach computationally tractable.
-
----
-
-## 8. Pedersen Commitments — Deep Dive
-
-### 8.1 Conceptual Foundation
-
-**Pedersen commitments** (Pedersen, 1991) are one of the simplest and most elegant constructions in commitment scheme theory. They are unconditionally (perfectly) hiding and computationally binding, based on the hardness of the discrete logarithm problem. Their construction predates zero-knowledge proofs by design motivation but fits naturally into the ZKP framework as a commitment primitive.
-
-The conceptual model of a Pedersen commitment is that of a **locked safe with two dials**. The first dial, turned to position $m$ (the message), sets the content. The second dial, turned to a random position $r$ (the blinding factor), locks the safe. Knowing which position $r$ opens to which content is the "discrete log" — and if discrete log is hard, even someone who sees the safe ($C$) cannot determine $m$ without knowing $r$.
-
-### 8.2 Mathematical Construction
-
-Let $\mathbb{G}$ be a cyclic group of prime order $p$ in which the discrete logarithm problem is hard. Let $g$ and $h$ be two independently chosen generators of $\mathbb{G}$, such that the discrete relationship $\log_g h$ is unknown. This independence condition — that no one knows the discrete log of $h$ base $g$ — is essential to the binding property.
-
-To commit to a message $m \in \mathbb{Z}_p$:
-
-1. Choose a uniformly random blinding factor $r \leftarrow \mathbb{Z}_p$
-2. Compute the commitment $C = g^m \cdot h^r \in \mathbb{G}$
-
-To open the commitment, reveal $(m, r)$. The verifier checks that $g^m \cdot h^r = C$.
-
-**Hiding**: For any two messages $m_0, m_1$ and any commitment $C$, there exists a unique $r_0$ such that $C = g^{m_0} h^{r_0}$ and a unique $r_1$ such that $C = g^{m_1} h^{r_1}$. Both are equally likely — the commitment $C$ is uniformly distributed in $\mathbb{G}$ regardless of the message $m$ (as long as $r$ is random). The hiding is therefore **perfect**: even an infinitely powerful adversary learns nothing about $m$ from $C$.
-
-**Binding**: Suppose a cheating committer can produce two valid openings $(m, r)$ and $(m', r')$ for the same commitment $C$ (with $m \neq m'$). Then $g^m h^r = g^{m'} h^{r'}$, which gives $g^{m - m'} = h^{r' - r}$, meaning $\log_g h = (m - m')(r' - r)^{-1} \mod p$ — the cheater has computed the discrete log of $h$ base $g$. If discrete log is hard, this contradicts the binding property. Therefore, the binding is **computational**: it holds against polynomial-time adversaries but could in principle be broken by a sufficiently powerful (e.g., quantum) prover.
-
-### 8.3 Homomorphic Properties
-
-Pedersen commitments have a beautiful **additive homomorphism** property: the commitment of a sum is the product of commitments.
-
-$$\text{Commit}(m_1, r_1) \cdot \text{Commit}(m_2, r_2) = g^{m_1} h^{r_1} \cdot g^{m_2} h^{r_2} = g^{m_1 + m_2} h^{r_1 + r_2} = \text{Commit}(m_1 + m_2, r_1 + r_2)$$
-
-This homomorphism allows verification of linear properties of committed values. For example, a verifier can check that the sum of committed values equals a known public sum, without learning the individual values. In federated learning, this would allow a server to verify that the sum of clients' committed gradient updates equals a declared total, providing aggregate integrity without individual exposure.
-
-### 8.4 Schnorr Proofs of Knowledge on Pedersen Commitments
-
-Once a value is committed, a sigma protocol can prove properties of the committed value in zero-knowledge. The **Schnorr protocol for discrete log** can be adapted to prove knowledge of the opening $(m, r)$ of commitment $C$ without revealing either $m$ or $r$.
-
-The protocol works as follows. The prover chooses random values $a_m, a_r \leftarrow \mathbb{Z}_p$ and computes an "announcement" $A = g^{a_m} h^{a_r}$. The verifier sends a random challenge $e$. The prover responds with $z_m = a_m + em$ and $z_r = a_r + er$ (both computations in $\mathbb{Z}_p$). The verifier accepts if $g^{z_m} h^{z_r} = A \cdot C^e$. An honest prover always satisfies this equation; a cheating prover who does not know $(m, r)$ cannot construct a consistent response to a random challenge.
-
-Applying the Fiat-Shamir transform makes this non-interactive: the challenge $e = H(C, A, x)$ is derived from the hash of the commitment, announcement, and statement. The resulting proof $\pi = (A, z_m, z_r)$ is a non-interactive zero-knowledge proof of knowledge of the Pedersen opening — three group elements or two field elements, compact and efficient.
-
-### 8.5 Pedersen in This Framework — Stub Status
-
-> **⚠️ The `pedersen` backend is an unfinished stub and provides no Byzantine-fault protection.** It exists solely to let the ZKP code paths be exercised in environments where the Go gnark binary cannot be built (e.g. sandboxed CI). Do not use it in any deployment that requires real integrity guarantees.
-
-The framework's Pedersen backend computes commitments over a 2048-bit safe-prime group $\mathbb{G} = \langle g \rangle \subset \mathbb{Z}_p^*$ (`fl/core/zkp.py`). However, the implementation stops there. Three components that would be required for a functional ZKP pipeline are deliberately absent:
-
-**1. Proof of knowledge (Schnorr / Fiat-Shamir).** The Schnorr protocol described in §8.4 — commit, challenge, respond — is not implemented. No `prove_knowledge()` or `verify_knowledge()` function exists. Commitment objects are computed in-process and then discarded; nothing is sent to the server.
-
-**2. Norm-bound proof.** Even a complete Schnorr proof-of-knowledge only shows the client *knows* the gradient that produced the commitment. It does not show the gradient's L2 norm is within any agreed bound. To prove a norm bound over Pedersen commitments, a Bulletproofs-style inner-product argument would be required. Bulletproofs are considerably more complex to implement correctly and, in pure Python, would be slower than the gnark Groth16 path while providing weaker security guarantees.
-
-**3. Wire transport.** Because proofs do not exist, nothing is serialised into the Flower metrics dictionary. The server receives empty proof payloads and falls back to plain FedAvg — identical to the baseline mode in terms of Byzantine-fault tolerance.
-
-The theoretical limitations of a fully-implemented Pedersen path are also significant. Proving knowledge of a gradient value is necessary but not sufficient for FL security — the norm constraint is what prevents gradient poisoning attacks. Additionally, a 2048-bit discrete-logarithm group provides approximately 112 bits of security, below the 128-bit target.
-
-### 8.6 Why Pedersen is Being Superseded
-
-The transition from Pedersen to Groth16 in this framework reflects the broader evolution of the ZKP field. Pedersen commitments are elegant and efficient for proving knowledge of values, but they are commitment schemes, not general-purpose proof systems. Expressing the norm constraint $\|w\|_2^2 \leq B$ over Pedersen commitments requires custom non-standard extensions (range proofs, arithmetic proof protocols) that become complex and expensive to implement and verify. Groth16, by contrast, accepts arbitrary arithmetic circuits — expressing the norm constraint is simply a matter of writing the corresponding R1CS constraints, which the gnark compiler handles automatically.
-
----
-
-## 9. gnark and Groth16 zk-SNARKs — Deep Dive
-
-### 9.1 The Groth16 Protocol
-
-**Groth16** (Groth, 2016) is the most widely deployed zk-SNARK protocol in production use. It produces constant-size proofs (3 elliptic curve points) and requires $O(n)$ pairing operations for setup but only 3 pairings for verification, regardless of the circuit's $n$ constraints. These properties make it the preferred proof system for applications where many proofs are verified by the same verifier.
-
-The protocol builds on the **Quadratic Arithmetic Program (QAP)** representation of arithmetic circuits. Given an R1CS with $m$ constraints and $n$ variables, there exist polynomials $u_i(X), v_i(X), w_i(X)$ for $i = 0, \ldots, n$ such that the R1CS is satisfiable if and only if:
-
-$$\left(\sum_{i=0}^{n} a_i \cdot u_i(X)\right) \cdot \left(\sum_{i=0}^{n} a_i \cdot v_i(X)\right) - \left(\sum_{i=0}^{n} a_i \cdot w_i(X)\right) = H(X) \cdot Z(X)$$
-
-for some polynomial $H(X)$ and the "vanishing polynomial" $Z(X) = \prod_{i=1}^{m}(X - \omega^i)$ (whose roots are the constraint indices). The prover's private witness $\{a_i\}$ satisfies this polynomial identity; anyone who can construct $H(X)$ such that this holds knows a satisfying assignment.
-
-Groth16 turns this polynomial identity into a pairing-based cryptographic proof. During a one-time **trusted setup**, trapdoor values $(\alpha, \beta, \gamma, \delta, \tau)$ are sampled from $\mathbb{Z}_p$ and then destroyed. The setup produces a **Structured Reference String (SRS)** — a public collection of elliptic curve points encoding powers of $\tau$: $\{[1]_1, [\tau]_1, [\tau^2]_1, \ldots, [\tau^m]_1\}$ in $\mathbb{G}_1$ and $\mathbb{G}_2$. The SRS enables the prover to commit to polynomials without revealing them (by evaluating them at the encrypted point $\tau$ inside the curve), but the SRS alone cannot be used to recover $\tau$ — that information was destroyed.
-
-The prover, given the witness, evaluates $H(\tau)$ inside the curve using the SRS, producing commitments to the prover polynomials. The proof $\pi = (A, B, C) \in \mathbb{G}_1 \times \mathbb{G}_2 \times \mathbb{G}_1$ is three elliptic curve points computed from the witness and the SRS. The verifier checks the proof using three pairing equations that, if satisfied, certify the polynomial identity holds at $\tau$ with overwhelming probability (by the Schwartz-Zippel lemma).
-
-### 9.2 The Trusted Setup and Its Implications
-
-The trusted setup is Groth16's most controversial aspect. During setup, secret scalars $(\alpha, \beta, \gamma, \delta, \tau)$ are chosen and their encoded powers embedded in the SRS. If any participant in the setup retains these values — the "toxic waste" — they can forge proofs for arbitrary false statements. The SRS is "trustworthy" only if the toxic waste is genuinely destroyed.
-
-In production deployments (Zcash, Ethereum), the trusted setup is conducted as a **Powers-of-Tau multi-party computation ceremony** (MPC). Many participants each contribute randomness, and the SRS is the accumulated product of all contributions. The toxic waste is only computable if *all* participants are malicious — if even one participant is honest and destroys their contribution, the toxic waste is unrecoverable. The 2022 Hermez Ceremony involved over 3,000 participants.
-
-In this framework, the SRS is generated locally by gnark for each circuit definition. This is acceptable for research and experimental purposes — the threat model does not include adversaries attempting to forge ZKP proofs by compromising the trusted setup. For a production healthcare FL deployment, a proper ceremony should be conducted. This is acknowledged as a known limitation in the framework's security documentation.
-
-### 9.3 The Gradient Circuit
-
-The gnark circuit implemented in this framework encodes two claims that together constitute a meaningful integrity guarantee for FL gradient updates.
-
-The first claim is **hash commitment**: the sampled gradient coordinates, when quantized to field elements (by multiplying by a fixed scale factor and rounding) and hashed through a MiMC hash chain, produce the publicly declared commitment value $C$. This proves the client is not changing their gradient after the fact and is committed to the specific values they submitted.
-
-The second claim is **norm boundedness**: the weighted sum of squared quantized coordinates does not exceed the declared bound $B^2 \cdot \text{scale}^2$. Working in the quantized domain (integers scaled by $10^6$) avoids floating-point ambiguity inside the finite-field circuit. The norm bound is a sum-of-squares constraint over the circuit wires, which is naturally expressed as a fixed number of multiplication and addition gates.
-
-What makes this circuit design interesting from a ZKP perspective is the **combination** of these two constraints in one proof. Prior to gnark, implementing this combination required either specialized protocols (Bulletproofs for range proofs, separate commitment schemes) or accepting that norm proofs are not binding to specific gradient values. By encoding both as R1CS constraints in a single Groth16 circuit, the prover produces a single 192-byte proof that simultaneously certifies both properties.
-
-### 9.4 gnark as a Proof System Library
-
-**gnark** (Consensys, 2022) is a Go library for writing, compiling, and proving arithmetic circuits. It provides a high-level circuit definition language in Go that compiles down to R1CS, supports Groth16 and PLONK backends, and is optimized for performance on modern hardware. The choice of Go over Rust (which hosts competitive libraries like bellman, arkworks) reflects a pragmatic engineering decision: Go's simpler deployment story, easier HTTP service construction, and good performance on Apple Silicon made it the best fit for this framework's needs.
-
-The gnark proof service in this framework operates as a stateless HTTP microservice. The circuit definition (gradient coordinates, scale, norm bound) is compiled once at startup and cached. Subsequent prove requests use the precompiled SRS and proving key without recompilation. Verification uses the correspondingly cached verification key, which is a small fixed-size object (~1.2 KB) regardless of circuit size. This is architecturally clean: the gnark service is a cryptographic co-processor, and the Python FL framework calls it via HTTP without managing any Go or cryptographic code directly.
-
-### 9.5 Why Groth16 and not Other Systems
-
-Groth16's choice over alternatives reflects this framework's requirements. **Bulletproofs** would eliminate the trusted setup and provide range proofs natively, but verification time is $O(n)$ in the number of constraints — for 32,000 constraints, this would be significantly slower than Groth16's constant-time verification. In FL, the server verifies proofs from all clients at each round, so verification speed is precious.
-
-**PLONK** (the other backend gnark supports) achieves a *universal* SRS that works for all circuits below a size threshold, avoiding per-circuit setup. However, PLONK's proof size is larger and proving time is somewhat slower than optimized Groth16. For a system with a fixed circuit definition (the gradient norm circuit is not changing between FL rounds), Groth16's per-circuit setup is acceptable and its performance advantage justifies it.
-
-**zk-STARKs** would provide post-quantum security and eliminate trusted setup, but their proof sizes (tens of kilobytes) are several orders of magnitude larger than Groth16's 192 bytes. For FL systems transmitting proofs over potentially bandwidth-constrained links, this overhead would be significant. The post-quantum argument for STARKs is also less urgent in the FL context because the gradient norm bound provides its security guarantee in real-time — a quantum adversary who breaks the proof long after training completes cannot retroactively un-bound the gradients that were aggregated during training.
-
----
-
-## 10. Pedersen vs Groth16: A Conceptual Comparison
-
-Pedersen commitments and Groth16 proofs represent two fundamentally different points in the design space of cryptographic proof systems. Understanding their conceptual differences clarifies why gnark was adopted as the primary backend and Pedersen retained only as a legacy alternative.
-
-### 10.1 Generality of the Proven Statement
-
-A Pedersen commitment proves one thing: the committer knows a value $m$ and a blinding factor $r$ such that $C = g^m h^r$. This is a proof of *knowledge of an opening* — a specific, narrow statement about the commitment relation. Proving any additional property — that $m$ is within a range, that $m$ satisfies a linear constraint, that $m$ is consistent with a hash of other values — requires building additional protocol machinery on top of the base commitment scheme. Range proofs over Pedersen commitments exist (Bulletproofs, Borromean ring signatures) but are non-trivially complex and each targets a specific type of constraint.
-
-A Groth16 proof proves an arbitrary NP statement: "there exists a witness satisfying this arithmetic circuit." The arithmetic circuit can encode any combination of addition, multiplication, comparison, hash evaluation, or any other polynomial-time computation. The proof generation and verification mechanisms are the same regardless of what the circuit computes — only the circuit definition changes. This generality is Groth16's defining advantage: adding the norm constraint to the gradient commitment required writing approximately 100 additional lines of Go circuit code, not designing a new cryptographic protocol.
-
-### 10.2 Proof Size and Verification Cost
-
-Pedersen's proof via Schnorr (non-interactive, Fiat-Shamir) for committing to a single gradient coordinate produces a proof of approximately 64–128 bytes — two or four field elements. For 100 sampled coordinates, the total proof size is 6,400–12,800 bytes. Verification requires checking one group equation per coordinate, scaling linearly with the number of coordinates proved.
-
-Groth16 produces a proof of exactly 192 bytes (three BN254 curve points) regardless of whether the circuit has 100 constraints or 100,000. Verification requires checking exactly three pairing equations, a constant-time operation taking approximately 80 milliseconds. As the circuit grows more complex (more gradient coordinates, more hash rounds, additional constraints), the proof size and verification time do not change. This asymptotic profile is ideal for the server-side verification bottleneck in FL: as the client's local model grows, proof verification overhead at the server remains fixed.
-
-The tradeoff is proving time: Groth16 takes approximately 22 seconds per 100-coordinate proof (Apple M1), while Schnorr-based Pedersen proving takes under 1 second. This proving overhead is the primary cost of using Groth16 in FL, adding roughly 22–45 seconds per client per round.
-
-### 10.3 Trust and Setup Assumptions
-
-Pedersen commitments require no trusted setup. The generators $g$ and $h$ are chosen randomly (from a hash-to-curve procedure), and security holds under the sole assumption that the discrete log problem is hard in $\mathbb{G}$. Any party can independently verify the generators were chosen without knowledge of their discrete relationship.
-
-Groth16 requires a trusted setup: the SRS must be generated by a trustworthy party or multi-party process. If the setup is compromised, all proofs using that SRS can be forged. This is a systemic risk that does not exist for Pedersen: a compromised Pedersen setup (if someone discovers $\log_g h$) merely allows the committer to equivocate — to change the committed value after the fact — affecting only individual commitments, not all proofs system-wide.
-
-In the context of this framework — a research prototype used for experimental evaluation — the trusted setup assumption is acceptable. In a production deployment with financial or medical consequences, the trusted setup would require a proper MPC ceremony.
-
-### 10.4 Security Strength
-
-Both Pedersen (over 2048-bit groups) and Groth16 (over BN254) provide classical security, though at different levels: approximately 112 bits and 128 bits respectively. Neither is post-quantum secure. An adversary with a large-scale quantum computer could break both systems using Shor's algorithm for discrete logs.
-
-The practical consequence is that both systems should be considered computationally binding only against current classical adversaries, with an understood upgrade path (to post-quantum ZKP systems like zk-STARKs or lattice-based commitments) if quantum threats materialize.
-
-### 10.5 Expressive Power Summary
-
-| Dimension               | Pedersen + Schnorr       | Groth16 (gnark)             |
-|-------------------------|--------------------------|------------------------------|
-| Proven statement        | Knowledge of commitment opening | Arbitrary arithmetic circuit |
-| Norm constraint support | ❌ Requires separate range proof | ✅ Native R1CS constraint |
-| Proof size              | Scales with number of values | Constant (192 bytes) |
-| Verification cost       | Linear in values proved  | Constant (3 pairings, ~80ms) |
-| Trusted setup           | None required            | Required (per circuit) |
-| Proving time            | ~1s (Schnorr)            | ~22s (Groth16, 100 coords) |
-| Security level          | ~112-bit (2048-bit DL)   | ~128-bit (BN254)             |
-| Post-quantum security   | ❌ No                    | ❌ No                        |
-| Go/C++ dependency       | None (Python-native)     | gnark Go service required    |
-
----
-
-## 11. Security Model and Limitations
-
-### 11.1 What ZKP Guarantees (and Does Not)
-
-The ZKP protocol in this framework provides precisely defined guarantees that must not be overstated.
-
-The norm-bounding proof guarantees that the proved gradient vector has $\ell_2$ norm at most $B$ in the sampled coordinates. It does not guarantee that the unsampled coordinates are also bounded — a sophisticated adversary could corrupt only coordinates outside the sampled region. The statistical detection probability depends on the number of corrupted coordinates and the sample size, as analyzed in Section 7.5.
-
-The commitment proof guarantees binding — the client cannot change the submitted gradient after publishing the commitment $C$. It does not guarantee that the committed gradient was produced by honest training on the client's declared dataset. A client can run arbitrary computation, as long as the resulting gradient satisfies the norm constraint. ZKP cannot distinguish a gradient from genuine training from one manufactured to be adversarially useful while satisfying the norm bound.
-
-No proof of *data quality* or *data provenance* is provided. The ZKP proves structural properties of the gradient, not the integrity of the data that produced it. This is a fundamental limitation: encoding "trained on a clean, representative dataset" as an arithmetic circuit constraint is an unsolved research problem.
-
-### 11.2 Combining ZKP and FHE
-
-The `he_tenseal_zkp` and `he_concrete_tfhe_zkp` modes layer ZKP on top of homomorphic encryption, providing both confidentiality and integrity. This combination is more powerful than either alone but introduces a subtle complication: the ZKP proof is generated on the *plaintext* gradient (the prover must know the gradient values to compute the proof) and transmitted alongside the encrypted gradient. The server can verify the proof's validity without decrypting the gradient, because the proof and the commitment $C$ are sufficient for verification.
-
-This architecture means the order of operations is: train → sample coordinates → compute MiMC commitment in plaintext → generate ZKP proof → encrypt gradient → transmit (encrypted gradient, commitment $C$, proof $\pi$). The server verifies $\pi$ and $C$ match (via the gnark verifier), confirms the integrity properties, then aggregates encrypted gradients homomorphically. Neither the plaintext gradient nor any information about it (beyond the norm bound) reaches the server.
-
-### 11.3 The Non-Post-Quantum Caveat
-
-Both gnark (Groth16 on BN254) and Pedersen (discrete log in a prime group) are broken by quantum computers running Shor's algorithm. This is a known limitation that aligns this framework with current production ZKP standards (Ethereum, Zcash) which also use BN254. The quantum timeline for large-scale quantum computation remains uncertain, but regulatory frameworks (NIST post-quantum standards, 2024) are beginning to require migration plans.
-
-Post-quantum ZKP alternatives include zk-STARKs (hash-based, quantum-resistant) and lattice-based commitment schemes. Neither is yet as mature or efficient as pairing-based SNARKs for general-purpose circuit proving, but rapid progress in this area is expected over the next 5–10 years.
-
-### 11.4 Composition with Differential Privacy
-
-The `dp` mode uses Opacus-based differential privacy (DP-SGD with Gaussian noise) to provide membership privacy — preventing the server from inferring whether a specific individual's data contributed to the model. This is a complementary guarantee to ZKP's integrity protection. The combined modes (`he_tenseal_zkp`, `he_concrete_tfhe_zkp`) do not yet include DP, though combining all three mechanisms is theoretically sound: DP operates at the training level, HE operates at the transmission level, and ZKP operates at the integrity verification level. All three can coexist without interaction.
-
----
-
-## 12. Recursive Proofs, Polynomial Commitments, and Post-Quantum ZKP
-
-### 12.1 Incrementally Verifiable Computation and NOVA
-
-A fundamental scalability limitation of monolithic zk-SNARKs for ML applications is circuit size: proving an entire neural network training run as a single Groth16 circuit would require billions of R1CS constraints, making proof generation time prohibitive (days to weeks). **Incrementally Verifiable Computation (IVC)** resolves this by proving iterated computations step by step, producing a *constant-size* proof regardless of the number of steps.
-
-Formally, IVC enables proofs of the statement: "Starting from state $z_0$, applying function $F$ exactly $n$ times yields state $z_n = F^n(z_0)$." Each step's proof $\pi_i$ certifies that $z_i = F(z_{i-1})$ *and* that $\pi_{i-1}$ is a valid IVC proof for the previous $i-1$ steps. The recursive structure means that the prover at step $i$ must "prove the verifier" — execute the ZKP verification of $\pi_{i-1}$ inside the arithmetic circuit for step $i$. The final proof $\pi_n$ has constant size (independent of $n$) and is verified in constant time.
-
-The naïve implementation — encoding a full SNARK verifier circuit inside each step's circuit — is expensive. The verifier of Groth16 requires $O(|x|)$ pairing operations (where $|x|$ is the number of public inputs), adding thousands of R1CS constraints per step. **NOVA** (Kothapalli, Setty, Tzialla, 2022) achieves dramatically more efficient IVC via *folding schemes*.
-
-**Folding** replaces full proof verification with a cheaper *accumulation* operation. Instead of verifying $\pi_{i-1}$ completely inside step $i$'s circuit, NOVA accumulates the claim "all previous steps are correct" into a *relaxed R1CS* instance — a relaxed version of the constraint system that admits an error term. The accumulation is very cheap (two multi-scalar multiplications in $\mathbb{G}_1$), and the final proof verifies the accumulated relaxed instance plus one standard SNARK proof for the last step. This reduces IVC overhead from $O(\text{circuit size})$ per step to a constant.
-
-**SuperNova** and **HyperNova** extend NOVA to *non-uniform* computation — where the function $F_i$ at each step may differ — and to multi-folding with hypercube structures, enabling efficient proving for heterogeneous training loops (varying batch sizes, adaptive learning rates, conditional computation).
-
-**IVC in federated learning**: VerifBFL (Bellachia et al., 2025) is the first FL system to use NOVA-based IVC for local training proofs. A client running $T$ local gradient descent steps generates one Groth16 proof committing to the entire $T$-step trajectory, with size independent of $T$. Proof generation for complete local training runs in under 81 seconds.
-
-For this framework, IVC represents the upgrade path from the current single-round gradient sampling approach: rather than proving 100 sampled gradient coordinates from one round, a client could prove all $E$ epochs of local training using IVC, providing a much stronger integrity guarantee that the gradient was produced by genuine optimization rather than crafted by an adversarial but norm-bounded update.
-
----
-
-### 12.2 KZG Polynomial Commitments
-
-**KZG commitments** (Kate, Zaverucha, Goldberg, 2010) are polynomial commitment schemes underlying all PLONK-family proof systems and recently adopted as the basis for Ethereum's danksharding blob commitments. KZG allows a prover to commit to a polynomial $f(X)$ of degree $d$ as a single elliptic curve point and later prove evaluations $f(z) = y$ at any point $z$ with a single-curve-point proof.
-
-**Construction**: In a trusted setup, scalar powers $\tau^0, \ldots, \tau^d$ are encoded as elliptic curve points $[1]_1, [\tau]_1, \ldots, [\tau^d]_1$ (the "powers of tau" SRS). To commit to $f(X) = \sum_{i=0}^d c_i X^i$, compute:
-
-$$C = \sum_{i=0}^d c_i [\tau^i]_1 = [f(\tau)]_1$$
-
-This single group element binds the committer to $f$ — changing any coefficient would produce a different curve point, and computing $\tau$ from the SRS requires solving the discrete logarithm.
-
-**Evaluation proof**: To prove $f(z) = y$, note that if $f(z) = y$, then the polynomial $q(X) = (f(X) - y)/(X - z)$ is a polynomial of degree $d-1$ (no remainder). The prover computes $W = [q(\tau)]_1$ using the SRS, and the verifier checks via bilinear pairing:
-
-$$e\!\left(C - [y]_1,\; [1]_2\right) = e\!\left(W,\; [\tau]_2 - [z]_2\right)$$
-
-This single pairing equation certifies $f(z) = y$ in constant time with a one-group-element proof.
-
-**KZG in ZKP for FL**: Rather than committing to gradient values via a hash function (as in this framework's MiMC-based circuit), a KZG-based approach could commit to the entire gradient vector as a polynomial (coefficient $i$ = gradient coordinate $i$), then selectively open evaluations requested by the server — one opening per sampled coordinate, each provable with one curve point. Compared to the current MiMC circuit:
-
-| Property | MiMC Hash (current) | KZG polynomial commitment |
-|---|---|---|
-| Commitment size | ~32 bytes (field element) | ~48 bytes (G1 point) |
-| Proof size per coordinate | Via Groth16 circuit (192 bytes total) | 48 bytes per evaluation |
-| Prover time (100 coords) | ~22s (Groth16) | ~1ms per evaluation |
-| Verifier time | ~80ms (3 pairings) | ~5ms per evaluation (1 pairing) |
-| Trusted setup required | Yes (per circuit) | Yes (universal, reusable) |
-| Binding on full gradient | ❌ (only sampled coords) | ✅ (entire polynomial) |
-
-The critical advantage of KZG is that the commitment is to the *entire gradient polynomial*, so any randomly chosen coordinate can be opened on demand — the server can adaptively choose which coordinates to audit, whereas the current sampling must be fixed before proof generation. This dynamic auditing capability provides stronger statistical security against selective poisoning attacks.
-
----
-
-### 12.3 Post-Quantum Zero-Knowledge Proofs
-
-The Groth16 proof system (and all PLONK/KZG variants) relies on the hardness of the elliptic curve discrete logarithm problem (ECDLP). Shor's quantum algorithm solves ECDLP in polynomial time on a sufficiently large quantum computer (~4,000 logical qubits for BN254). This places all pairing-based ZKP systems in the same post-quantum threat class as RSA and classical Diffie-Hellman.
-
-Unlike the HE components (CKKS, TFHE), which are based on LWE and believed quantum-secure, the ZKP layer of this framework's combined `he_*_zkp` modes would be broken by a quantum-capable adversary — allowing proof forgery (Byzantine clients could submit arbitrary gradients with valid-looking proofs) while gradient confidentiality (HE) remains intact.
-
-Two main directions provide post-quantum ZKP:
-
-**Hash-based proofs — zk-STARKs**: FRI (Fast Reed-Solomon Interactive Oracle Proof of Proximity) underpins STARKs (Ben-Sasson, Bentov, Horesh, Riabzev, 2018). Soundness reduces to collision resistance of the underlying hash function — believed post-quantum (Grover's algorithm provides only a quadratic speedup for preimage search, not collision finding, and 256-bit hashes retain at least 128-bit quantum security). STARKs require *no trusted setup* (the prover uses a public random oracle rather than an SRS) — eliminating the trusted setup vulnerability entirely.
-
-| Property | Groth16 | zk-STARK |
-|---|---|---|
-| Post-quantum secure | ❌ (ECDLP) | ✅ (hash collision resistance) |
-| Trusted setup | Required (per-circuit) | None |
-| Proof size | 192 bytes | 50–200 KB |
-| Prover time (100-coord circuit) | ~22s | ~5–30s (implementation-dependent) |
-| Verifier time | ~80ms (3 pairings) | ~5–50ms (hash verification) |
-| On-chain verification gas | ~600K gas (pairing) | ~3–10M gas (hash tree) |
-| Tooling maturity | High (gnark, bellman) | Medium (StarkWare, Polygon zkEVM) |
-
-The primary STARK trade-off is proof size: 50–200 KB versus 192 bytes for Groth16. For FL, where proofs are transmitted with gradient updates over institutional networks, STARK proof size adds meaningful overhead but is not prohibitive in the cross-silo setting.
-
-**Lattice-based ZKPs**: Systems like **Ligero** (Ames, Hazay, Ishai, Venkitasubramaniam, 2017), **Brakedown** (Golovnev et al., 2023), and the **Shortest-Vector Proof** (SVP) paradigm provide ZKPs based on LWE or SIS (Short Integer Solution) — the same hardness assumptions as CKKS and TFHE. This offers *uniform* post-quantum security across both the HE and ZKP components of the full privacy stack. Proof sizes remain larger than pairing-based systems (~hundreds of kilobytes) and efficiency lags current pairing-based SNARKs, but the shared hardness assumption simplifies security arguments.
-
-**Migration path for this framework**: The gnark service's modular design allows backend substitution. Replacing the Groth16 backend with a STARK backend (e.g., gnark's STARK support, or a Go STARK library) requires updating the gnark Go circuit and service, with no changes to the Python FL layer that calls the HTTP endpoints. The framework's plugin architecture isolates the ZKP backend from the training and aggregation logic.
-
----
-
-## 13. Further Reading
-
-### Foundational ZKP Papers
-
-- **Goldwasser, Micali, Rackoff (1985)**: "The Knowledge Complexity of Interactive Proof Systems" — the founding paper defining zero-knowledge proofs. [ECRYPT reprint](https://people.csail.mit.edu/silvio/Selected%20Scientific%20Papers/Proof%20Systems/The_Knowledge_Complexity_Of_Interactive_Proof_Systems.pdf)
-- **Goldreich, Micali, Wigderson (1987)**: "Proofs That Yield Nothing But Their Validity" — every NP language has a ZKP system. [IACR ePrint](https://www.wisdom.weizmann.ac.il/~oded/gmw1.html)
-- **Fiat, Shamir (1986)**: "How to Prove Yourself: Practical Solutions to Identification and Signature Problems" — the Fiat-Shamir transform making ZKP non-interactive.
-- **Pedersen (1991)**: "Non-Interactive and Information-Theoretic Secure Verifiable Secret Sharing" — introducing Pedersen commitments.
-
-### zk-SNARK Papers
-
-- **Groth (2016)**: "On the Size of Pairing-Based Non-Interactive Arguments" — the Groth16 protocol. [ePrint 2016/260](https://eprint.iacr.org/2016/260.pdf)
-- **Parno, Howell, Gentry, Raykova (2013)**: "Pinocchio: Nearly Practical Verifiable Computation" — early SNARK system, predecessor to Groth16.
-- **Bowe, Gabizon, Miers (2017)**: "Scalable Multi-party Computation for zk-SNARK Parameters" — multi-party setup ceremonies.
-- **PLONK (2019)**: Gabizon, Williamson, Ciobotaru — universal SRS SNARKs. [ePrint 2019/953](https://eprint.iacr.org/2019/953.pdf)
-
-### ZKP-Friendly Primitives
-
-- **MiMC (Albrecht et al., 2016)**: "MiMC: Efficient Encryption and Cryptographic Hashing with Minimal Multiplicative Complexity" — the hash function used in this framework's circuit. [ePrint 2016/492](https://eprint.iacr.org/2016/492.pdf)
-- **Poseidon (2019)**: Grassi et al. — a more recent ZK-friendly hash with lower R1CS cost. [ePrint 2019/458](https://eprint.iacr.org/2019/458.pdf)
-
-### ZKP in Machine Learning
-
-- **ZKML (2023)**: "Scaling Up Trustless DNN Inference with Zero-Knowledge Proofs" — verifiable neural network inference.
-- **EZKL (2023)**: Open-source framework for converting neural networks to ZKP circuits. [github.com/zkonduit/ezkl](https://github.com/zkonduit/ezkl)
-
-### ZKP in Federated Learning
-
-- **Guo et al. (2021)**: "VKFL: Verifiable Knowledge Federated Learning" — ZKP for FL gradient integrity.
-- **Zhao et al. (2022)**: "ZKFed: Secure Federated Learning with ZK-Proofs" — norm-bounded gradient proofs in FL.
-
-### Libraries
-
-| Library | Language | Backend | Notes |
-|---------|----------|---------|-------|
-| gnark | Go | Groth16, PLONK | Used in this framework |
-| bellman | Rust | Groth16 | Zcash's original SNARK library |
-| arkworks | Rust | Groth16, PLONK, Marlin | Modular, academic research |
-| snarkjs | JavaScript | Groth16, PLONK | Browser-compatible |
-| Bulletproofs | Rust | Range proofs | No trusted setup |
-| EZKL | Python/Rust | PLONK | Neural network to ZKP |
-
----
-
-> **Detailed implementation guides**:
-> - [ZKP.md](ZKP.md) — practical FL integration guide (setup, API, configuration)
-> - [ZKP.md](ZKP.md) — gnark service reference (HTTP API, circuit design, benchmarks)
-> - [FHE.md](FHE.md) — homomorphic encryption (the complementary confidentiality mechanism)
-> - [README.md](README.md) — all 10 modes with benchmarks
-
-
----
-
-## Zero-Knowledge Proof Guide
-
-> **Primary backend: gnark (Groth16 zk-SNARK)** — See [ZKP.md](ZKP.md) for full gnark setup.  
-> Legacy Pedersen backend documented in the [appendix](#appendix-legacy-pedersen-backend) below.  
-> Navigation: [README.md](README.md)
-
-### Table of Contents
-1. [What is ZKP in this framework?](#what-is-zkp-in-this-framework)
-2. [Threat Model](#threat-model)
-3. [Quick Start — gnark Backend](#quick-start--gnark-backend)
-4. [How zkp_sampled Works in FL](#how-zkp_sampled-works-in-fl)
-5. [Python API Reference](#python-api-reference)
-6. [Circuit Design](#circuit-design)
-7. [Performance Profile](#performance-profile)
-8. [Configuration Options](#configuration-options)
-9. [Troubleshooting](#troubleshooting)
-10. [Appendix: Legacy Pedersen Backend](#appendix-legacy-pedersen-backend)
-
----
-
-### What is ZKP in this framework?
-
-This framework implements **Groth16 zk-SNARKs** via [gnark](https://github.com/consensys/gnark) (Go) to let federated learning clients prove the *integrity* of their submitted gradient updates — without revealing the raw values.
-
-Each participating client:
-1. Trains a local model on its private dataset
-2. Computes a **Groth16 proof** that the gradient update satisfies two properties:
-   - The update is committed to a specific value (MiMC hash matches)
-   - The update's L2 norm is within a declared bound (Byzantine fault detection)
-3. Sends the proof alongside its model update
-4. The aggregation server verifies all proofs before aggregating
-
-**What gnark proves per round**: For a sampled subset of `k` gradient coordinates, there exists a preimage (the actual gradient) whose MiMC hash equals the submitted commitment AND whose squared L2 norm ≤ `max_norm_sq × scale²`. A forged or poisoned gradient that passes norm-bounding would have to break ~128-bit security.
-
-### Threat Model
-
-| Adversary | Mode | Protection |
-|-----------|------|-----------|
-| HBC server (reads gradients) | `he_tenseal` / `he_concrete_tfhe` | ✅ Encryption hides values |
-| Byzantine client (poisoned gradients) | `zkp_sampled` | ✅ ZKP proof prevents invalid updates |
-| HBC server **+** Byzantine client | `he_tenseal_zkp` / `he_concrete_tfhe_zkp` | ✅ Both |
-| Linkage/membership inference | `dp` | ✅ Differential privacy |
-
-ZKP does **not** protect the gradient's confidentiality (values are visible to the server). Combine with HE for full protection.
-
----
-
-### Quick Start — gnark Backend
-
-#### 1. Prerequisites
-
-- Go 1.21+ installed: `go version`
-- gnark service binary compiled (do once):
-
-```bash
-cd fl_ppml/zkp_gnark_service
-go mod tidy
-go build -o gnark_service main.go
-```
-
-#### 2. Start the gnark Service
-
-```bash
-## Start in background (listens on :9000)
-./gnark_service &
-echo "gnark service PID: $!"
-
-## Verify it's running
-curl -s http://localhost:9000/health | python -m json.tool
-## Expected: {"status": "ok", "circuit": "loaded"}
-```
-
-#### 3. Run ZKP Mode
-
-```bash
-cd fl_ppml
-
-## Single ZKP mode
-python -m compare.runner --dataset healthcare --modes zkp_sampled
-
-## Or ZKP + encryption combinations
-python -m compare.runner --dataset healthcare --modes he_tenseal_zkp
-python -m compare.runner --dataset healthcare --modes he_concrete_tfhe_zkp
-```
-
----
-
-### How zkp_sampled Works in FL
-
-#### Round Lifecycle (per client, per round)
-
-```
-Client trains locally
-        |
-        v
-Sample k=100 gradient coordinates (deterministic seed from round+client_id)
-        |
-        v
-Compute MiMC hash of sampled gradients → commitment C
-        |
-        v
-POST /prove  →  gnark service generates Groth16 proof (π)
-        |
-        v
-Send (gradients, C, π) to server
-        |
-        v
-Server: POST /verify for each client proof
-        |
-        v
-Only verified clients' gradients are FedAvg-aggregated
-```
-
-#### Why Sample Instead of All Gradients?
-
-A neural network may have millions of parameters. Proving all coordinates would make each round take hours. Sampling 100 coordinates:
-- Still catches poisoned gradients (attacker must corrupt all sampled coords probabilistically)
-- Limits proving time to ~22s per client per round
-- Reduces gnark circuit size from millions to 100 constraints
-
-**Security**: If an attacker cannot predict which 100 coordinates will be sampled (the seed is derived from round and client ID), they cannot selectively poison non-sampled coordinates while passing proof verification.
-
-#### Proof Verification in Aggregation
-
-`server.py` aggregate step:
-
-```python
-from core.security import verify_gnark_proofs
-
-def aggregate_fit(self, server_round, results, failures):
-    verified_results = []
-    for client, fit_res in results:
-        proof_data = fit_res.metrics.get("zkp_proof")
-        commitment = fit_res.metrics.get("zkp_commitment")
-        if verify_gnark_proofs([proof_data], [commitment]):
-            verified_results.append((client, fit_res))
-        else:
-            logger.warning(f"Client {client} rejected: invalid ZKP proof")
-    return super().aggregate_fit(server_round, verified_results, failures)
-```
-
----
-
-### Python API Reference
-
-#### `core/security.py`
-
-```python
-from core.security import generate_gnark_proofs, verify_gnark_proofs
-
-## Client side: generate proofs for sampled gradient coordinates
-proofs = generate_gnark_proofs(
-    gradients: list[float],    # sampled gradient coordinates
-    max_norm: float = 10.0,    # declared L2 norm bound
-    gnark_url: str = "http://localhost:9000"
-) -> list[dict]
-## Returns: [{"proof": "<hex>", "commitment": "<hex>", "public_inputs": [...]}]
-
-## Server side: verify proofs from all clients
-is_valid = verify_gnark_proofs(
-    proofs: list[dict],        # proof objects from generate_gnark_proofs
-    commitments: list[str],    # hex-encoded MiMC commitments
-    gnark_url: str = "http://localhost:9000"
-) -> bool
-## Returns True only if ALL proofs verify correctly
-```
-
-#### gnark HTTP API
-
-The gnark service exposes three endpoints:
-
-```
-POST http://localhost:9000/prove
-Content-Type: application/json
-
-{
-  "gradients": [0.12, -0.34, ...],   // k float64 values
-  "max_norm_sq": 100.0,              // max_norm^2 * scale^2
-  "scale": 1000                      // quantization scale
-}
-
-→ {"proof": "<hex>", "public_inputs": ["<commitment_hex>", "<bound_hex>"]}
-```
-
-```
-POST http://localhost:9000/verify
-Content-Type: application/json
-
-{
-  "proof": "<hex>",
-  "public_inputs": ["<commitment_hex>", "<bound_hex>"]
-}
-
-→ {"valid": true}
-```
-
-```
-POST http://localhost:9000/verify_light
-Same as /verify but uses a cached verification key for ~3× faster parallel verification
-```
-
----
-
-### Circuit Design
-
-#### MiMC Hash Commitment
-
-```go
-// In gnark circuit (Go):
-func (c *GradientCircuit) Define(api frontend.API) error {
-    // 1. MiMC hash of quantized gradients
-    mimc, _ := mimc.NewMiMC(api)
-    for _, g := range c.Gradients {
-        quantized := api.Mul(g, c.Scale)
-        mimc.Write(quantized)
-    }
-    hash := mimc.Sum()
-    api.AssertIsEqual(hash, c.Commitment)
-
-    // 2. L2 norm bound check
-    sumSq := frontend.Variable(0)
-    for _, g := range c.Gradients {
-        q := api.Mul(g, c.Scale)
-        sumSq = api.Add(sumSq, api.Mul(q, q))
-    }
-    api.AssertIsLessOrEqual(sumSq, c.MaxNormSq)
-    return nil
-}
-```
-
-**Why MiMC?**: MiMC is a ZK-friendly hash (uses field arithmetic). Standard hashes like SHA-256 cost >20,000 R1CS constraints; MiMC costs ~300 per evaluation, making it practical for gradient commitment.
-
-**Quantization**: Float64 gradients are multiplied by `scale=1000` and cast to `int64` before hashing. This maps fractional values to integers that the finite-field circuit can process. The norm bound is correspondingly scaled: `bound_sq = max_norm_sq × scale²`.
-
-#### Circuit Statistics
-
-| Parameter | Value |
-|-----------|-------|
-| Gradient coordinates per proof | 100 (sampled) |
-| R1CS constraints | ~32,000 |
-| Proving key size | ~4.8 MB |
-| Verification key size | ~1.2 KB |
-| Trusted setup | Groth16 universal (BN254 curve) |
-
----
-
-### Performance Profile
-
-| Metric | Value | Notes |
-|--------|-------|-------|
-| Proof generation | ~22.4s per client per round | Go, Apple M1 |
-| Proof verification | ~0.08s per proof | Fast — uses cached vk |
-| Proof size | ~192 bytes | Groth16 compressed |
-| Commitment size | 32 bytes | BN254 field element |
-| gnark service startup | ~0.3s | circuit loaded at startup |
-| Client communication overhead | +224 bytes/round | proof + commitment |
-
-**Bottleneck**: Groth16 proving time. For `n` clients and `r` rounds: total ZKP time ≈ `n × r × 22.4s`. This is why `zkp_sampled` has ~11.6× wall-clock overhead vs baseline for 2 clients, 3 rounds (≈ 2×3×22.4s = 134s extra).
-
----
-
-### Configuration Options
-
-#### Gnark Service
-
-```bash
-## Default port
-./gnark_service --port 9000
-
-## Custom port
-./gnark_service --port 9001
-export GNARK_SERVICE_URL="http://localhost:9001"
-```
-
-#### Python Client
-
-```python
-## environment variable override
-export GNARK_SERVICE_URL="http://localhost:9000"
-
-## Or pass directly
-proofs = generate_gnark_proofs(
-    gradients=sample,
-    max_norm=10.0,
-    gnark_url="http://my-server:9000"
-)
-```
-
-#### Sampling Configuration
-
-In `core/security.py`, edit:
-
-```python
-ZKP_SAMPLE_SIZE = 100       # number of gradient coords to sample per proof
-ZKP_MAX_NORM = 10.0         # default L2 norm bound
-ZKP_SCALE = 1000            # quantization scale (int64 representation)
-```
-
----
-
-### Troubleshooting
-
-| Problem | Cause | Fix |
-|---------|-------|-----|
-| `Connection refused :9000` | gnark service not started | `cd zkp_gnark_service && ./gnark_service &` |
-| `go build` fails | Missing gnark dependency | `cd zkp_gnark_service && go mod tidy && go build` |
-| `{"valid": false}` from /verify | Wrong public inputs passed | Ensure commitment from /prove is passed verbatim |
-| Proof generation takes >60s | Slow CPU / M-chip Rosetta | Use native arm64 Go binary: `GOARCH=arm64 go build` |
-| `proof_verification = 0.0` in benchmark | Using Pedersen backend | Ensure `FL_ZKP_BACKEND=gnark` env var is set |
-| Circuit mismatch error | Stale proving key | Delete `zkp_gnark_service/*.key` and rebuild |
-
----
-
-### Appendix: Legacy Pedersen Backend
-
-The original ZKP implementation used **Pedersen commitments** (discrete-log-based, in Python). This is significantly lighter-weight but provides weaker guarantees:
-
-- No norm-bounding circuit — only a hash commitment
-- No succinct verification — verifier must re-derive commitments
-- Cryptographic security based on discrete log in a 2048-bit group
-
-#### Setup (Legacy)
-
-```bash
-python -m fl.keys generate zkp --output zkp_params.pkl --bit_length 2048
-```
-
-#### Running (Legacy)
-
-```bash
-## Set backend to pedersen explicitly
-export FL_ZKP_BACKEND=pedersen
-
-python simulation.py simulation --zkp --zkp_params zkp_params.pkl \
-  --data_path ./data/ --dataset cifar --number_clients 2 \
-  --rounds 2 --max_epochs 1 --benchmark
-```
-
-#### How Pedersen Works
-
-Client: `C = g^m * h^r mod p`
-- `m` = gradient value (scaled to integer)
-- `r` = random blinding factor
-- `g`, `h` = public generators
-- `p` = large safe prime
-
-Server receives `C` and later asks client to open it. Server cannot determine `m` from `C` alone (hiding). Client cannot change `m` after committing (binding).
-
-**Compared to gnark**:
-
-| | gnark (Groth16) | Pedersen |
-|--|----------------|---------|
-| Security | 128-bit (BN254) | 112-bit (2048-bit DL) |
-| Norm bound proof | ✅ Yes (circuit) | ❌ No |
-| Proof size | 192 bytes | ~512 bytes commitment |
-| Proving time | ~22s | ~0.3s |
-| Go dependency | Required | None |
-| Verifier cost | O(1) (pairing) | O(n) (rerandomize) |
-
-**Recommendation**: Use gnark for production. Use Pedersen only for development/testing where the Go service is unavailable.
-
----
-
-### Further Reading
-
-- [ZKP.md](ZKP.md) — comprehensive gnark service documentation
-- [README.md](README.md) — all 10 modes compared
-- [gnark documentation](https://docs.gnark.consensys.io/)
-- [Groth16 paper](https://eprint.iacr.org/2016/260.pdf) — Jens Groth, 2016
-- [MiMC paper](https://eprint.iacr.org/2016/492.pdf) — Albrecht et al., 2016
-
-
----
-
-## gnark Zero-Knowledge Proof Guide
-
-**The authoritative reference for the gnark Groth16 proof service in this framework.**
-
-> This document consolidates all gnark-related documentation. See [ZKP.md](ZKP.md) for a one-page cheat sheet.
-
----
-
-### Table of Contents
-
-1. [What is gnark and Why We Use It](#1-what-is-gnark-and-why-we-use-it)
-2. [Architecture](#2-architecture)
-3. [Building the Service](#3-building-the-service)
-4. [Running the Service](#4-running-the-service)
-5. [HTTP API Reference](#5-http-api-reference)
-6. [Python Client Integration](#6-python-client-integration)
-7. [How ZKP Plugs into the FL Loop](#7-how-zkp-plugs-into-the-fl-loop)
-8. [Circuit Design: What Is Being Proved](#8-circuit-design-what-is-being-proved)
-9. [Performance Characteristics](#9-performance-characteristics)
-10. [Using gnark Modes in the Framework](#10-using-gnark-modes-in-the-framework)
-11. [Dataset-Specific Notes](#11-dataset-specific-notes)
-12. [Security Model](#12-security-model)
-13. [Configuration Reference](#13-configuration-reference)
+# Zero-Knowledge Proofs: Reference
+
+This document describes what the framework proves with zero-knowledge proofs, how the proofs are produced and checked, what they guarantee, and what they do not. Every statement about behaviour refers to the current code; every number is a measurement with its setting stated.
+
+1. [Summary](#1-summary)
+2. [Background](#2-background)
+3. [Threat model](#3-threat-model)
+4. [The update bound](#4-the-update-bound)
+5. [Circuits](#5-circuits)
+6. [Modes and protocols](#6-modes-and-protocols)
+7. [Keys and trusted setup](#7-keys-and-trusted-setup)
+8. [The proof service](#8-the-proof-service)
+9. [Python API](#9-python-api)
+10. [Results, outcomes and the ledger](#10-results-outcomes-and-the-ledger)
+11. [Performance](#11-performance)
+12. [Configuration](#12-configuration)
+13. [Limitations](#13-limitations)
 14. [Troubleshooting](#14-troubleshooting)
-15. [gnark vs. Legacy Pedersen Backend](#15-gnark-vs-legacy-pedersen-backend)
 
 ---
 
-### 1. What is gnark and Why We Use It
+## 1. Summary
 
-#### gnark
+Clients prove that their model update is small: ‖w_local − w_global‖₂ ≤ B, where B is a bound the server sets. The proofs are Groth16 zk-SNARKs over BN254, produced by a Go service built on [gnark](https://github.com/consensys/gnark).
 
-[gnark](https://github.com/consensys/gnark) is an open-source Go library by Consensys for building and proving **zk-SNARK** circuits. This framework uses gnark for its **Groth16** backend — the most widely deployed zk-SNARK protocol, known for:
+| Mode | What is proven | Bound to what the server aggregates? | Integrity guarantee |
+|---|---|---|---|
+| `zkp` | Norm bound and MiMC hash of the quantized update, every coordinate | Yes: the server recomputes the update from the upload and its own global model | Each admitted update satisfies the bound |
+| `zkp_sampled` | The same, for server-sampled coordinates after a commitment | Yes, for sampled coordinates | None beyond `zkp`: the server already sees plaintext. Benchmark of sampled proving cost only |
+| `he_elgamal_zkp` | Every ciphertext encrypts an in-range value, and the encrypted update against the encrypted global model satisfies the bound | Yes: the ciphertexts and the global aggregate are public inputs | Each admitted update satisfies the bound; the server sees neither model nor update |
+| `he_elgamal_zkp_sampled` | The same, for server-sampled committed coordinates | Yes, for sampled coordinates | Probabilistic: a coordinate that breaks the bound is caught if sampled |
+| `he_tenseal_zkp`, `he_concrete_tfhe_zkp`, and their `_dp` variants | The plaintext statement over a client-chosen vector | **No** | **None.** Confidentiality only (see [6.5](#65-cksstfhe-composites)) |
+| `pedersen` backend | Nothing is verified | — | **None.** Refused unless explicitly allowed (see [6.6](#66-pedersen-stub)) |
 
-- **Constant proof size**: ~128–650 bytes regardless of witness complexity
-- **Constant verification time**: ~2–15 ms, a fixed number of pairing operations on BN254
-- **Non-interactivity**: One proof message, no back-and-forth protocol
-- **Zero knowledge**: Prover reveals nothing about private inputs beyond the claim being proven
-
-The proof service binary (`gnark_service`) compiles to `~18 MB` and runs as a lightweight HTTP server exposing a JSON API.
-
-#### Why ZKP in Federated Learning?
-
-In standard FL, the server aggregates gradient updates assuming all clients are honest. A **Byzantine adversary** — a malicious client — can submit any gradient: inflated norms, backdoor-poisoned updates, or manufactured updates to bias the global model. Homomorphic encryption (HE) protects *confidentiality* from the server, but does nothing to stop a malicious client from encrypting a poisoned gradient.
-
-**ZKP addresses this orthogonal threat**: clients generate cryptographic proofs that their model update satisfies structural constraints (bounded gradient norm, hash commitment to parameters) *before* the server aggregates. The server verifies the proof — a fast operation — before including the update. A poisoned update that violates the proven constraints will cause proof verification to fail.
-
-| Threat | HE Address? | ZKP Addresses? |
-|--------|-------------|---------------|
-| Honest-but-curious server reading gradients | ✓ | ✗ |
-| Malicious server manipulating aggregation | ✗ | ✓ (zkFL variant) |
-| Malicious client poisoning with valid-looking gradients | ✗ | ✓ (norm bound proof) |
-| Membership inference on aggregated model | ✗ | ✗ |
+A bounded update can still be malicious. The bound limits how far one admitted client moves the global model per round, not in which direction (see [13](#13-limitations)).
 
 ---
 
-### 2. Architecture
+## 2. Background
 
-```
-┌────────────────────────────────────────────────────────────────┐
-│                    FL Training Round                           │
-│                                                                │
-│  Client k                                                      │
-│  ┌──────────────────────────────────────────────────────────┐  │
-│  │ 1. Local training → Δw_k (gradient update)              │  │
-│  │ 2. Quantize weights to int64 (scale = 1,000,000)        │  │
-│  │ 3. HTTP POST /prove → gnark service                      │  │
-│  │    Request: {layer_name, weights_b64, shape, bound_sq}   │  │
-│  │    Response: {proof_b64, hash_hex}                       │  │
-│  │ 4. Attach proofs to FitRes metrics                       │  │
-│  │ 5. Send Δw_k (plaintext or encrypted) + proofs to server │  │
-│  └──────────────────────────────────────────────────────────┘  │
-│                                                                │
-│  Server                                                        │
-│  ┌──────────────────────────────────────────────────────────┐  │
-│  │ 6. For each client: HTTP POST /verify → gnark service    │  │
-│  │    Request: {layer_name, proof_b64, hash_hex, bound_sq}  │  │
-│  │    Response: {verified: true/false}                      │  │
-│  │ 7. Reject clients with failed proofs                     │  │
-│  │ 8. FedAvg aggregate over verified clients only           │  │
-│  └──────────────────────────────────────────────────────────┘  │
-│                                                                │
-│  gnark Service (Go, port 9000) — shared by client and server   │
-│  ┌──────────────────────────────────────────────────────────┐  │
-│  │ Circuit: MiMC hash + sum-of-squares norm bound           │  │
-│  │ Backend: Groth16 on BN254 curve                          │  │
-│  │ Setup: Per-shape circuit cache (compiled once, reused)   │  │
-│  └──────────────────────────────────────────────────────────┘  │
-└────────────────────────────────────────────────────────────────┘
-```
+**Zero-knowledge proof.** A prover convinces a verifier that a statement is true without revealing anything beyond its truth. The properties used here:
 
-#### Component Overview
+- **Completeness:** an honest prover with a true statement always convinces the verifier.
+- **Soundness** (knowledge soundness for SNARKs): a prover without a valid witness convinces the verifier only with negligible probability, under the scheme's assumptions and an honest trusted setup.
+- **Zero knowledge:** the proof reveals nothing about the witness beyond the statement.
 
-| Component | Language | Location | Role |
-|-----------|----------|----------|------|
-| `gnark_service` (binary) | Go 1.21+ | `zkp_gnark_service/` | Proof generation + verification HTTP server |
-| `core/zkp.py` | Python | `core/zkp.py` | Python client wrapping the HTTP API |
-| `compare/experiment.py` | Python | `compare/experiment.py` | Auto-starts gnark service for ZKP modes |
-| gnark v0.10.0 | Go | (dependency) | zk-SNARK circuit library |
-| gnark-crypto v0.12.2 | Go | (dependency) | BN254 elliptic curve, pairings |
+**Groth16.** A pairing-based zk-SNARK with constant-size proofs and constant-time verification (three pairings). Statements are arithmetic circuits compiled to rank-1 constraint systems (R1CS) over the scalar field of BN254, a prime r ≈ 2²⁵⁴. Each circuit needs its own trusted setup (see [7](#7-keys-and-trusted-setup)).
+
+**Field arithmetic.** Circuit values are elements of the field, so an unconstrained sum of squares can wrap around r. Both circuits constrain every witness to a small integer range, which rules this out.
+
+**MiMC.** A hash function designed for arithmetic circuits (cheap in constraints). The norm circuit publishes the MiMC hash of the vector it bounds, binding the proof to specific values.
+
+**Exponential ElGamal on BabyJubJub.** An additively homomorphic encryption over the twisted Edwards curve defined over the BN254 scalar field, so curve arithmetic is native to the circuit. A value v encrypts as (r·G, v·G + r·PK); ciphertexts add coordinate-wise, and decryption recovers v·G, from which small v is found by a discrete-log search.
 
 ---
 
-### 3. Building the Service
+## 3. Threat model
 
-#### Prerequisites
-
-- **Go 1.21+**: https://go.dev/dl/  
-- **Verify**: `go version` (should print `go version go1.21` or newer)
-
-#### Build Steps
-
-```bash
-## Navigate to the service directory
-cd fl_ppml/zkp_gnark_service
-
-## Download Go dependencies (~50 MB, cached after first run)
-go mod download
-
-## Compile the service binary
-go build -o gnark_service main.go
-
-## Verify the binary
-ls -lh gnark_service
-## Expected: -rwxr-xr-x ... 18M gnark_service
-```
-
-**Platform notes:**
-- **macOS Apple Silicon**: Builds natively as `arm64`
-- **macOS Intel**: Builds as `amd64`
-- **Linux**: `go build -o gnark_service main.go` (same command)
-- **Windows**: `go build -o gnark_service.exe main.go`
-
-> **First compile is slow (~2 min)** due to gnark's circuit compilation. Subsequent builds are fast.
-
-#### Docker Build (Alternative)
-
-```bash
-cd fl_ppml/zkp_gnark_service
-docker build -t fhe-zkp-service:latest .
-
-docker run -p 9000:9000 \
-  -e ZKP_SERVICE_PORT=9000 \
-  --name zkp-service \
-  fhe-zkp-service:latest
-```
+- **Clients** may be malicious: they can upload arbitrary parameters, ciphertexts, proofs and metadata, run their own modified prover, and replay earlier messages.
+- **The server** is honest in following the protocol (it verifies and aggregates correctly). In `he_elgamal_zkp` it is curious: it must not learn client updates or the global model.
+- **All clients share one ElGamal secret key.** Confidentiality in the ElGamal modes is against the server, not between clients.
+- **The trusted setup** was performed by a party that did not keep the setup randomness (see [7](#7-keys-and-trusted-setup)). Whoever ran setup could forge proofs.
+- **Out of scope:** colluding clients coordinating bounded updates, the correctness of local training, availability attacks against the proof service, side channels.
 
 ---
 
-### 4. Running the Service
+## 4. The update bound
 
-#### Local Deployment
+### 4.1 What is bounded
 
-```bash
-cd fl_ppml/zkp_gnark_service
+For every ZKP mode the statement is about the update Δ = w_local − w_global, over all model tensors (weights and buffers) flattened:
 
-## Start with defaults (listens on :9000)
-./gnark_service
+‖Δ‖₂ ≤ B (plus a rounding slack stated per circuit below).
+
+The server chooses B and sends it to clients in the fit configuration (`zkp_max_update_norm`). A client that receives no bound refuses to prove.
+
+The CKKS/TFHE + DP composites (`he_tenseal_zkp_dp`, `he_concrete_tfhe_zkp_dp`) do not enforce the bound: their proofs are not bound to the aggregated ciphertext ([6.5](#65-cksstfhe-composites)), so a bound would add no integrity, and DP noise makes honest updates several times larger than the non-DP calibration, so every update would be clipped. They still prove the update with per-proof declared bounds, without a model-wide total and without clipping.
+
+### 4.2 Choosing B
+
+```
+B = PER_STEP_UPDATE_NORM[dataset] × local_epochs × max_client_batches
 ```
 
-Expected startup output:
-```
-2026/03/02 10:23:45 Initializing gnark proof service...
-2026/03/02 10:23:45 Service listening on :9000
-2026/03/02 10:23:45 Available endpoints:
-  POST /prove         - Generate Groth16 proof for layer weights
-  POST /verify        - Verify a proof against public values
-  POST /verify_light  - Lightweight verification (hash-only check)
-  GET  /health        - Service health check
-```
+- `max_client_batches` is the largest number of batches any client has per epoch. The server computes it from the same data partition clients use (same seed, client count, validation split and Dirichlet parameter), so it knows the number of local optimiser steps without trusting clients.
+- `PER_STEP_UPDATE_NORM` is calibrated per dataset with `scripts/calibrate_update_norm.py`: plain FedAvg with the harness's training settings, for several client counts and several initial models, recording ‖Δ‖ / steps for every client and round. The table stores KAPPA = 1.5 times the maximum.
+- `FL_ZKP_MAX_NORM` overrides the table with an explicit update norm for one run.
 
-#### Background Process (recommended for FL runs)
+Why steps and initial models: an honest update grows with the number of optimiser steps (fewer clients → larger shards → more steps per epoch), and the first rounds' updates depend strongly on the initial model. `fl.server.make_strategy` seeds the initial model with the run's seed so runs are reproducible.
 
-```bash
-## Start in background, redirect logs
-./gnark_service > /tmp/gnark_service.log 2>&1 &
+**Calibrated values** (client counts 2, 3, 5; initial-model seeds 0, 1, 2, 3, 42; 3 rounds; partition seed 42; one local epoch; harness batch sizes; learning rate 0.001):
 
-## Save the PID so you can stop it later
-ZKP_PID=$!
-echo "gnark service PID: $ZKP_PID"
+| Dataset | Per-step bound | Largest honest ‖Δ‖ (clients: 2 / 3 / 5) | Headroom B ÷ largest (2 / 3 / 5) |
+|---|---|---|---|
+| healthcare | 0.00379517 | 0.0683 / 0.0399 / 0.0218 | 1.50 / 1.71 / 1.91 |
+| stock | 0.00270624 | 0.1002 / 0.0854 / 0.0523 | 1.95 / 1.52 / 1.50 |
+| creditcard | 0.00212879 | 2.078 / 1.970 / 1.819 | 3.28 / 2.31 / 1.50 |
+| mnist | 0.0129091 | 1.891 / 1.872 / 1.454 | 2.88 / 1.95 / 1.50 |
+| cifar10 | 0.00389718 | 0.856 / 0.611 / 0.334 | 1.60 / 1.50 / 1.65 |
 
-## Verify it's alive
-curl -s http://127.0.0.1:9000/health
-## Expected: {"status": "ok", "service": "gnark-zkp"}
+Datasets without an entry (including the legacy `cifar` key) make ZKP modes refuse to start unless `FL_ZKP_MAX_NORM` is set.
 
-## Stop when done
-kill $ZKP_PID
-```
+**Update norm grows sublinearly with steps.** The per-step norm is largest for configurations with few steps, so taking the maximum keeps honest clients unclipped in every calibrated configuration but leaves the bound loose where clients take many steps (up to 3.3× the largest honest update for creditcard with 2 clients). A configuration with fewer steps than any calibrated one can exceed the calibrated per-step maximum; clipping is then visible in the round outcomes. Recalibrate after changing the model, optimiser, learning rate or batch size, and calibrate DP runs separately (DP noise enlarges honest updates).
 
-#### Auto-Start via Framework
+### 4.3 Clipping
 
-The framework (`compare/experiment.py`) automatically starts and stops the gnark service for ZKP-containing modes (`zkp_sampled`, `he_tenseal_zkp`, `he_concrete_tfhe_zkp`). You only need to start it manually if running individual scripts.
+Honest clients clip before proving, so a correct client is never rejected by the bound:
 
-#### Verify Service is Running
+- `zkp`, `zkp_sampled` (`fl/privacy/zkp.py::clip_update_in_place`): Δ is scaled to 0.999·B, and the exact integer statement the server will check is tested before proving, shrinking further if rounding would push it over. The clipped weights are what the client uploads.
+- `he_elgamal_zkp`, `he_elgamal_zkp_sampled` (`fl/core/elgamal_gnark.py::quantize_update`): the quantized values are rounded around the global model, so the clipped update always fits the circuit's slack.
 
-```bash
-## Health check
-curl http://127.0.0.1:9000/health
+Each client reports `zkp_update_norm` (before clipping) and `zkp_update_clipped`; the server records them per round.
 
-## Quick proof smoke-test
-curl -s -X POST http://127.0.0.1:9000/prove \
-  -H "Content-Type: application/json" \
-  -d '{
-    "layer_name": "smoke_test",
-    "weights_b64": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
-    "shape": [5],
-    "scale": "1000000",
-    "bound_sq": "10000000000"
-  }' | python3 -m json.tool
-```
+### 4.4 Declared per-proof bounds
 
-Expected response:
-```json
-{
-  "proof_b64": "oX6A...[base64 bytes]...",
-  "hash_hex": "a1b2c3d4...",
-  "verified": false
-}
-```
+A model is proven in chunks, each with its own public bound. Clients declare each chunk's bound as that chunk's exact energy (at least 1); the circuit enforces each declared bound, and the server rejects a client whose declared bounds sum to more than the model-wide total. This bounds the whole update without rejecting honest updates whose energy is concentrated in a few chunks. In `he_elgamal_zkp` the declared bounds are visible to the server (see [13](#13-limitations)).
 
 ---
 
-### 5. HTTP API Reference
+## 5. Circuits
 
-All endpoints accept and return `application/json`. The service runs on `http://127.0.0.1:9000` by default.
+Both circuits have a fixed size fixed by the pinned keys. Shorter inputs are padded with values that contribute nothing to the bound.
 
-#### `GET /health`
+### 5.1 Norm circuit (`zkp_gnark_service/main.go`, n = 256)
 
-Service health check. Returns immediately.
+Public inputs: `Bound`, `Hash`. Witness: `Weights[256]`.
 
-**Response:**
-```json
-{
-  "status": "ok",
-  "service": "gnark-zkp"
-}
-```
+Constraints:
+1. each `w` is a signed 64-bit integer (range check of w + 2⁶³ in 64 bits);
+2. `MiMC(Weights) = Hash`;
+3. Σ w² ≤ `Bound`.
 
----
+The range check means Σ w² ≤ 256 · 2¹²⁶ < r, so the sum cannot wrap the field. Without it, a prover whose hash is not recomputed by the verifier could choose two large field elements whose squares sum to a small value modulo r.
 
-#### `POST /prove`
+What is proven in each mode: the witness is the quantized update of one chunk, Δq = round(w·s) − round(g·s) with s = `FL_ZKP_SCALE` (10⁶), for up to 256 consecutive values of one tensor. Padding is zeros, and the hash covers the padded vector.
 
-Generate a Groth16 zk-SNARK proof for a model layer's weight tensor.
+Model-wide bound checked by the server: Σ declared bounds ≤ ⌈B·s + √n⌉², where n is the number of coordinates proven. The √n term absorbs rounding (each Δq coordinate is within 1 of s·Δ), so any ‖Δ‖ ≤ B fits. The admitted update therefore satisfies ‖Δ‖ ≤ B + √n / s.
 
-**What it proves**: The weight vector, when quantized and hashed with MiMC, has a sum-of-squares (squared Euclidean norm) below `bound_sq`. Specifically:
+Size: **103,365 constraints**.
 
-$$\sum_{i} w_i^2 \leq \text{bound\_sq}$$
+### 5.2 ElGamal update circuit (`zkp_gnark_service/elgamal.go`, n = 128)
 
-where $w_i$ are integer-quantized weights (original float × scale, truncated to int64).
+Public inputs: `PK`, `Bound`, `Context`, `Weight` (W), the client's ciphertexts `C1[128], C2[128]`, and the global model at the same slots `G1[128], G2[128]`.
+Witness: `Values[128]` (v = q + 2¹⁷), `Rand[128]`, `Agg[128]` (T), `SK`.
 
-**Request:**
-```json
-{
-  "layer_name": "fc1.weight",
-  "weights_b64": "<base64 of little-endian int64 serialized weights>",
-  "shape": [128, 64],
-  "scale": "1000000",
-  "bound_sq": "10000000000000000"
-}
-```
+Constraints:
+1. `SK·G = PK`, so the witness key is the key PK belongs to;
+2. W < 2¹⁴ (range check);
+3. for each slot: v < 2¹⁸ (range check that doubles as the scalar decomposition), `C1 = r·G`, `C2 = v·G + r·PK`;
+4. for each slot: T < 2³² and `G2 = T·G + SK·G1`, so T is the unique plaintext of the global slot;
+5. Σ (W·v − T)² ≤ `Bound`, which equals Σ (W·q − S)² because the offsets cancel (T = S + W·2¹⁷, S = Σ nₖ·qₖ).
 
-| Field | Type | Description |
-|-------|------|-------------|
-| `layer_name` | string | Identifier for circuit caching (same shape = cached circuit) |
-| `weights_b64` | string | Base64-encoded `int64[]` (8 bytes per weight, little-endian) |
-| `shape` | int[] | Tensor dimensions (used for circuit size, not for proof) |
-| `scale` | string | Quantization scale (float × scale → int64); use string to avoid precision loss |
-| `bound_sq` | string | Max allowed sum-of-squares of quantized weights; string for large integers |
+`Context` is (round << 32) | (layer << 16) | chunk and is bound by a constraint, so a proof cannot be replayed at another round or position.
 
-**Response:**
-```json
-{
-  "proof_b64": "<base64 of gob-encoded Groth16 proof>",
-  "hash_hex": "<hex of MiMC hash of quantized weights>",
-  "verified": false
-}
-```
+The global model is the server's previous aggregate: G = Σ nₖ·Cₖ with W = Σ nₖ. Before the first aggregation it is the server's public initial model, encoded as G = (identity, (q + 2¹⁷)·G) with W = 1. The server passes the ciphertexts it holds; only clients, which hold the shared secret key, know S.
 
-> `verified: false` in the `/prove` response is expected — the service does not self-verify by default. Use `/verify` to confirm.
+Padding: client slots are (identity, 2¹⁷·G) with v = 2¹⁷, r = 0; global slots are (identity, W·2¹⁷·G) with T = W·2¹⁷. Both sides rebuild them, and their difference term is 0.
 
-**Typical latency**: 1.5–45s depending on layer size and hardware. The circuit is compiled once per (layer shape, bound) combination and cached in memory.
+Values: q = round(w·s) with s = `FL_ELGAMAL_SCALE` (10⁴) and |q| < 2¹⁷, so |w| < 13.1.
+
+Model-wide bound checked by the server: Σ declared bounds ≤ W²·⌈B·s + √n/2⌉². The admitted update satisfies ‖q/s − S/(W·s)‖ ≤ B + √n / (2s).
+
+Size: **1,274,949 constraints**.
 
 ---
 
-#### `POST /verify`
+## 6. Modes and protocols
 
-Verify a previously generated proof.
+### 6.1 `zkp`
 
-**Request:**
-```json
-{
-  "layer_name": "fc1.weight",
-  "proof_b64": "<same proof_b64 from /prove>",
-  "hash_hex": "<same hash_hex from /prove>",
-  "bound_sq": "10000000000000000"
-}
-```
+**Client, per round**
+1. Receive the global model g (it is kept as the base of the update).
+2. Train locally.
+3. Clip Δ to B ([4.3](#43-clipping)); compute Δq per tensor.
+4. Split each tensor's Δq into chunks of 256, declare each chunk's bound, and request a proof from the prover service. The client checks that the prover answered under the pinned verifying key.
+5. Upload the clipped weights with the proofs in the fit metrics (`zkp_proofs_json`).
 
-**Response:**
-```json
-{
-  "verified": true,
-  "proof_b64": "",
-  "hash_hex": ""
-}
-```
+**Server, per round**, for each client:
+1. Check proof coverage against its **own** model schema: exactly one proof per expected tensor or chunk, correct shapes and scale, every proof under the pinned verifying key, declared bounds positive and summing to at most the total.
+2. Recompute Δq from the uploaded parameters and its own global model.
+3. Ask the verifier service to verify each proof with the hash recomputed from Δq.
 
-**Latency**: 2–15 ms (constant).
+Admitted clients are averaged (FedAvg); the aggregate becomes the global model. If fewer clients are admitted than `min_fit_clients`, the global model is unchanged (`no_quorum`). If the verifier is unreachable or fails, the round is aborted (`infrastructure_abort`), and no client is blamed.
 
----
+### 6.2 `zkp_sampled`
 
-#### `POST /verify_light`
+Two Flower rounds per federated round (commit–challenge):
 
-Lightweight verification using only the hash, without full zk-SNARK verification. Faster but provides weaker guarantees (hash pre-image resistance only, not full zero-knowledge soundness).
+- **Commit (odd rounds):** clients train, clip, and upload their full weights without proofs. The server stores each commitment together with the global model at that time.
+- **Challenge (even rounds):** only now does the server draw a fresh 256-bit seed and send it. Clients prove the sampled coordinates of the Δq they committed; the server recomputes those coordinates from the commitment and verifies. Clients that pass are aggregated.
 
-**Request:** Same as `/verify`  
-**Response:** Same as `/verify`  
-**Latency:** < 1 ms
+Sample size is s = ⌈rate · n⌉ with rate `FL_ZKP_SAMPLE_PCT` (default 0.1). Indices come from a partial Fisher–Yates shuffle driven by SHA-256 of the seed, so anyone with the seed can reproduce them; the seed is recorded in the round outcome. The total bound uses the sample size.
 
-> Use `/verify` (full) in production. `/verify_light` is for development/testing.
+This mode has no security value: the server receives plaintext weights and can check the update norm directly. It exists to compare sampled against full proving cost.
 
----
+A client that has no commitment for a challenge (for example one that connected late) answers with no proofs and is rejected; a client that committed but does not answer is rejected too.
 
-### 6. Python Client Integration
+### 6.3 `he_elgamal_zkp`
 
-The Python client is in `core/zkp.py`. It provides two main functions:
+**Client, per round**
+1. Download the global model. In round 1 this is the server's plaintext initial model; afterwards it is the encrypted aggregate, which the client decrypts with the shared secret key, keeping the sums S and weight W.
+2. Train locally.
+3. Quantize and clip the update around the global model ([4.3](#43-clipping)).
+4. For each chunk of 128 coordinates of each tensor, declare the bound and request `/elgamal/prove` with the values, the global slots and their sums. The service encrypts with fresh randomness and proves the chunk statement.
+5. Upload the ciphertexts (64 bytes per coordinate) with a header and the proofs.
 
-#### `generate_gnark_proofs(state_dict, ...)`
+**Server, per round**, for each client:
+1. Check the header and ciphertext sizes against its own schema, proof coverage, the pinned verifying key, and the declared bounds against W²·⌈B·s + √n/2⌉².
+2. Verify each chunk proof against the received ciphertexts, the global aggregate it holds at those slots, and W.
 
-Called by each FL **client** after local training, before sending updates to the server.
+Admitted ciphertexts are aggregated homomorphically with weights nₖ (the clients' reported batch counts); the result becomes the next global model. The total weight must stay below 2¹⁴; otherwise the round is aborted, because no client could prove against that aggregate. The same no-quorum and abort rules as `zkp` apply.
 
-```python
-from core.zkp import generate_gnark_proofs
+The server never holds the secret key, the global model or any update in plaintext.
 
-## model_state is model.state_dict() or a dict of numpy arrays
-proofs, total_bytes = generate_gnark_proofs(
-    state_dict=model.state_dict(),
-    layers=None,               # None = ALL layers; or list of layer names
-    service_url="http://127.0.0.1:9000",
-    scale=1_000_000,           # Quantization scale (float → int64)
-    max_norm_sq=100.0 ** 2,    # Max gradient norm bound (squared)
-    timeout=120                # Seconds to wait for proof service
-)
+### 6.4 `he_elgamal_zkp_sampled`
 
-## proofs: dict {layer_name: {"proof_b64": "...", "hash_hex": "..."}}
-## total_bytes: int, total proof payload size for benchmarking
-```
+Commit–challenge as in [6.2](#62-zkp_sampled), over ElGamal:
 
-**Internal steps:**
-1. For each selected layer:
-   - Flatten the weight tensor to 1D
-   - Multiply by `scale` and cast to `int64`
-   - Serialize as little-endian bytes and base64-encode
-   - `POST /prove` with quantized weights + `bound_sq = max_norm_sq * scale^2`
-2. Collect `{proof_b64, hash_hex}` per layer
-3. Return as JSON-serializable dict (passed via Flower's `metrics` field in `FitRes`)
+- **Commit:** clients clip, quantize and encrypt every coordinate, keeping the values, the encryption randomness and the global model they measured against. They upload ciphertexts only.
+- **Challenge:** after the seed, clients prove each chunk of sampled coordinates with `/elgamal/prove_with`, using the stored randomness, so the proof only verifies against the committed ciphertexts. The server verifies against the commitments and the global aggregate it held at commit time.
+
+A coordinate that makes the bound impossible, or whose committed ciphertext differs from what the client later proves, is detected if sampled. With m such coordinates out of n and s sampled, the detection probability is 1 − C(n−m, s)/C(n, s) ≥ 1 − (1 − s/n)^m (`fl.core.sampling.detection_probability`). Unsampled coordinates carry no proof. An out-of-range unsampled ciphertext makes aggregate decryption fail for every client: a denial of service that is only detected after aggregation.
+
+### 6.5 CKKS/TFHE composites
+
+`he_tenseal_zkp`, `he_concrete_tfhe_zkp` and their `_dp` variants run the `zkp` client over the plaintext update and then encrypt with CKKS or TFHE. The server cannot recompute the update from ciphertexts, so it uses **light verification**: it checks the proofs against the client-supplied hash (`/verify_light`) plus coverage and the total bound.
+
+Nothing ties that hash to the ciphertext the server aggregates. A client can prove an honest update and upload the encryption of a different one. These modes provide confidentiality only; their ZKP adds cost and no integrity. The `_dp` variants do not enforce the update bound at all ([4.1](#41-what-is-bounded)).
+
+### 6.6 Pedersen stub
+
+`--zkp_backend pedersen` computes Pedersen commitments locally and sends nothing to verify. It is refused unless `FL_ZKP_ALLOW_PEDERSEN_STUB=1`; when allowed, every round is recorded with outcome `unverified_stub`, and the run's `zkp_backend` is recorded as `pedersen`.
 
 ---
 
-#### `verify_gnark_proofs(params, layer_names, proofs, ...)`
+## 7. Keys and trusted setup
 
-Called by the FL **server** in `aggregate_fit` before including a client's update.
+### 7.1 Setup
 
-```python
-from core.zkp import verify_gnark_proofs
-
-ok, failed_layers = verify_gnark_proofs(
-    params=parameters_to_ndarrays(fit_res.parameters),
-    layer_names=["fc1.weight", "fc1.bias", "fc2.weight", "fc2.bias"],
-    proofs=fit_res.metrics.get("zkp_proofs"),   # dict from client
-    service_url="http://127.0.0.1:9000",
-    timeout=30
-)
-
-if not ok:
-    print(f"Rejecting client — proof failed for layers: {failed_layers}")
-    # Drop this client from aggregation
-else:
-    # Include in FedAvg
+```bash
+cd zkp_gnark_service && go build -o gnark_service . && cd ..
+zkp_gnark_service/gnark_service setup --keys-dir zkp_gnark_service/keys --pk-dir ~/.cache/fl_ppml/gnark_pk [--norm-n 256] [--elgamal-n 128] [--force]
 ```
 
-**Internal steps:**
-1. For each layer in `layer_names`:
-   - Re-quantize the received parameters (same scale as client)
-   - Recompute `hash_hex` locally  
-   - `POST /verify` with the client's `proof_b64` and the recomputed `hash_hex`
-   - If `verified: false`, add to `failed_layers`
-2. Return `(all_ok: bool, failed_layers: list[str])`
+`setup` compiles both circuits, runs Groth16 setup once for each, and writes:
+
+- `keys/<circuit>-<n>.vk`: verifying keys, committed to the repository;
+- `keys/manifest.json`: for each circuit its size, constraint count, SHA-256 of the verifying and proving keys, the gnark version, the date and a statement of the setup model;
+- `<pk-dir>/<circuit>-<n>.pk`: proving keys (hundreds of MB), written with mode 0600 and not committed.
+
+It refuses to overwrite existing keys without `--force`. Regenerating keys re-pins the verifying keys: proofs made under old keys no longer verify, and the new `keys/` directory must be committed.
+
+### 7.2 Roles and pinning
+
+- The **prover** loads proving keys (hash-checked against the manifest) and compiles the circuits.
+- The **verifier** loads only verifying keys (hash-checked) and never receives `--pk-dir`.
+
+Either role refuses to start if a file is missing or its hash differs from the manifest, and neither runs setup. Every proof payload carries the SHA-256 of its verifying key. The server rejects a proof made under any other key, and sends the pinned hash (never the client's claim) with every verification request; a verifier holding different keys answers HTTP 503, which aborts the round. Each round outcome records the manifest hash.
+
+The harness (`compare.py`) starts both roles, and reuses a running service only if its `/health` reports the expected role and manifest hash.
+
+### 7.3 What a single-party setup does and does not give
+
+Guaranteed:
+- every prover and verifier uses the same published verifying key, identified by hash;
+- proofs remain verifiable after restarts and by independent verifiers; anyone with the committed `.vk` can re-check a stored proof;
+- the verifier process never holds proving keys or setup randomness.
+
+Not guaranteed: that the setup randomness (τ, α, β, γ, δ) was destroyed. It existed in the memory of the process that ran `setup`. Whoever controlled that process could forge proofs for false statements that every verifier accepts. Soundness holds against provers who did not run setup.
+
+A multi-party ceremony would change this: a universal Powers-of-Tau phase followed by a per-circuit phase in which several independent parties contribute makes forgery require all contributors to collude. gnark provides MPC setup support (`backend/groth16/bn254/mpcsetup`); this framework does not use it.
 
 ---
 
-### 7. How ZKP Plugs into the FL Loop
+## 8. The proof service
 
-```python
-## client.py (simplified)
-class ZKPClient(fl.client.NumPyClient):
-    def fit(self, parameters, config):
-        # 1. Standard local training
-        set_parameters(self.model, parameters)
-        train(self.model, self.train_loader, ...)
-        updated_params = get_parameters(self.model)
-        
-        # 2. Generate ZKP proofs (NEW)
-        with BenchmarkTimer("proof_generation"):
-            proofs, proof_bytes = generate_gnark_proofs(
-                self.model.state_dict()
-            )
-        
-        # 3. Return parameters + proofs in metrics
-        return updated_params, len(self.train_loader.dataset), {
-            "zkp_proofs": json.dumps(proofs),
-            "proof_bytes": proof_bytes,
-        }
+### 8.1 Running it
 
-## server.py (simplified)
-class ZKPStrategy(FedAvg):
-    def aggregate_fit(self, server_round, results, failures):
-        verified_results = []
-        for client, fit_res in results:
-            proofs = json.loads(fit_res.metrics.get("zkp_proofs", "{}"))
-            
-            # Verify before including
-            with BenchmarkTimer("proof_verification"):
-                ok, bad_layers = verify_gnark_proofs(
-                    parameters_to_ndarrays(fit_res.parameters),
-                    layer_names,
-                    proofs
-                )
-            
-            if ok:
-                verified_results.append((client, fit_res))
-            else:
-                logger.warning(f"Client rejected: bad proof for {bad_layers}")
-        
-        # Aggregate only verified updates
-        return super().aggregate_fit(server_round, verified_results, failures)
+```bash
+zkp_gnark_service/gnark_service serve --role prover   --keys-dir zkp_gnark_service/keys --pk-dir ~/.cache/fl_ppml/gnark_pk --port 9000
+zkp_gnark_service/gnark_service serve --role verifier --keys-dir zkp_gnark_service/keys --port 9001
+zkp_gnark_service/gnark_service elgamal-keygen keys/he_elgamal/secret_key.json keys/he_elgamal/public_key.json
 ```
+
+`compare.py` starts both roles automatically. `python -m fl.keys generate he_elgamal` wraps `elgamal-keygen`.
+
+### 8.2 Endpoints
+
+| Endpoint | Role | Purpose |
+|---|---|---|
+| `GET /health` | both | `status`, `service`, `role`, `manifest_sha256`, and for each circuit `n` and `vk_sha256` |
+| `POST /prove` | prover | Norm proof |
+| `POST /verify` | verifier | Norm proof, hash recomputed from the values sent |
+| `POST /verify_light` | verifier | Norm proof against a supplied hash |
+| `POST /elgamal/prove` | prover | Encrypt with fresh randomness and prove a chunk |
+| `POST /elgamal/prove_with` | prover | Prove a chunk for given values and randomness (commit–challenge) |
+| `POST /elgamal/encrypt` | prover | Encrypt values, returning ciphertexts and randomness |
+| `POST /elgamal/decrypt` | prover | Decrypt aggregate sums |
+| `GET /elgamal/info?n=` | prover | Constraint counts for a chunk size (compiles the circuit) |
+| `POST /elgamal/verify` | verifier | Verify a chunk proof |
+| `POST /elgamal/aggregate` | verifier | Weighted homomorphic sum of client ciphertexts |
+
+Integers are little-endian int64, base64-encoded. Field integers (`bound_sq`, `context`, `sk`) are decimal strings. Points are 32-byte compressed encodings; public keys are hex. Every verification request must include `vk_sha256`.
+
+**`/prove`** request: `layer_name`, `weights_b64`, `shape`, `scale`, `bound_sq`. Response: `proof_b64`, `hash_hex`, `vk_sha256`, `circuit_n`.
+
+**`/verify`** request: the same plus `proof_b64` and `vk_sha256`. Response: `verified`.
+
+**`/verify_light`** request: `layer_name`, `shape`, `bound_sq`, `hash_hex` (canonical field element), `proof_b64`, `vk_sha256`. Response: `verified`.
+
+**`/elgamal/prove`** request: `pk`, `sk`, `values_b64`, `bound_sq`, `context`, and the global model at the same slots: either `global_ct_b64` + `global_weight` + `global_sums_b64` (aggregate), or `global_plain_b64` (initial model, weight 1). `/elgamal/prove_with` adds `rand_b64` (32-byte big-endian scalars). Response: `ct_b64`, `proof_b64`, `vk_sha256`.
+
+**`/elgamal/verify`** request: `pk`, `ct_b64`, `bound_sq`, `context`, `proof_b64`, `vk_sha256`, and `global_ct_b64` + `global_weight` or `global_plain_b64` (no sums). Response: `verified`.
+
+**`/elgamal/aggregate`** request: `cts_b64` (one per client), `weights`. Refuses a total weight ≥ 2¹⁴. Response: `ct_b64`.
+
+**`/elgamal/decrypt`** request: `sk`, `ct_b64`, `offset_total`, `max_abs`. Response: `values`.
+
+### 8.3 Status codes and how the framework treats them
+
+| Status | Meaning | Framework behaviour |
+|---|---|---|
+| 200 | Request processed; for verification, see `verified` | Admit only if `verified` is true |
+| 400 | Malformed request, wrong size, value out of range | During verification: the client is rejected |
+| 422 | Statement not satisfied (prove), or refused value | During proving: the client's upload fails |
+| 503 | The service's keys differ from the requested `vk_sha256` | Round aborted (`infrastructure_abort`) |
+| other 5xx, timeout, connection error | Service failure | Round aborted (`infrastructure_abort`) |
 
 ---
 
-### 8. Circuit Design: What Is Being Proved
+## 9. Python API
 
-The gnark circuit (`main.go`) encodes two claims in a single Groth16 circuit over the BN254 prime field $\mathbb{F}_q$:
+**`fl.core.zkp_gnark`** (norm circuit)
+- `generate_gnark_proofs(state_dict, layers=None, service_url=None, scale=None, total_bound_sq=None, timeout=None) -> (proofs, proof_bytes)`: integer arrays are proven as given; float arrays are quantized. Each proof declares its own energy as its bound; with `total_bound_sq`, their sum must fit.
+- `verify_gnark_proofs(parameters, layer_names, proofs) -> (ok, failures)`: recomputes each hash from `parameters`.
+- `verify_gnark_proofs_light(proofs) -> (ok, failures)`: verifies against the proofs' own hashes (not bound to anything the caller holds).
+- `check_proof_policy(proofs, schema, *, require_hash, total_bound_sq, scale=None) -> reason | None`
+- `policy_bound_sq(max_update_norm, n, scale=None)`, `quantize(values)`, `energy(q)`, `expected_proof_layout(schema)`
+- `GnarkServiceError`: raised for infrastructure failures, never for client faults.
 
-#### Claim 1: Hash Integrity (MiMC hash)
+**`fl.core.elgamal_gnark`** (ElGamal circuit)
+- `GlobalModel.initial(arrays, scale)`, `GlobalModel.aggregate(weight, layers, sums=None)`, `GlobalModel.request(indices, prover=...)`
+- `quantize_update(glob, local_flat, max_update_norm, scale) -> (q, norm, clipped)`
+- `total_bound_sq(max_update_norm, scale, weight, n)`, `update_energy(q, sums, weight)`
+- `prove_chunk`, `prove_with`, `verify_chunk`, `encrypt_values`, `aggregate`, `decrypt`
+- `Policy.from_env()`, `chunks_for(schema, chunk_size)`, `chunk_indices(schema, chunk)`, `context_value(round, chunk)`
+- `ElGamalServiceError` (infrastructure), `ElGamalRejected` (the service refused the contents)
 
-The prover holds a private witness $\mathbf{w} = (w_1, \ldots, w_n) \in \mathbb{Z}^n$ (quantized weights). The circuit computes:
+**`fl.core.update_bound`**: `max_update_norm(config)`, `bound_from_fit_config(fit_config)`, `clip_update(global, local, bound, fits)`, `split_bound(energies, total)`, `PER_STEP_UPDATE_NORM`, `KAPPA`.
 
-$$h = \text{MiMC}(w_1, w_2, \ldots, w_n)$$
+**`fl.core.gnark_keys`**: `load_manifest()`, `manifest_sha256()`, `circuit_size(circuit)`, `pinned_vk_sha256(circuit)`, `missing_proving_keys()`.
 
-and asserts this equals the public input `hash_hex`. This is a **preimage proof**: the prover knows a preimage of the hash, demonstrating they hold the actual weights (not a fabricated proof). Since MiMC is a ZK-friendly hash (defined as polynomial operations over $\mathbb{F}_q$), it is efficient inside arithmetic circuits.
+**`fl.core.sampling`**: `sample_rate_from_env()`, `sample_size(n, rate)`, `new_round_seed()`, `sample_indices(seed_hex, n, s)`, `detection_probability(n, s, m)`.
 
-#### Claim 2: Norm Bound
-
-The circuit also computes the **sum of squares** of all weights:
-
-$$S = \sum_{i=1}^{n} w_i^2$$
-
-and asserts $S \leq \text{bound\_sq}$ using gnark's range check gadgets. In finite field arithmetic, this uses the decomposition of the inequality into binary constraints.
-
-**What this guarantees in FL context:**
-- The gradient update has a bounded $\ell_2$ norm: $\|\Delta w\|_2 \leq \sqrt{\text{bound\_sq}} / \text{scale}$
-- This prevents norm-inflated Byzantine attacks where adversarial gradients have dramatically larger magnitude than legitimate ones
-- Combined with standard FedAvg averaging, norm-bounded updates limit any single client's impact on the global model
-
-#### Circuit Sizes (approximate)
-
-| Layer size | # Constraints | Proving time | Circuit cache size |
-|-----------|--------------|-------------|-------------------|
-| 10 params | ~500 | < 1s | Fast |
-| 1k params | ~50k | ~1s | ~10 MB |
-| 10k params | ~500k | ~15s | ~100 MB |
-| 100k params | ~5M | ~2 min | ~1 GB |
-
-> **`zkp_sampled` mode**: To keep proving tractable for large models, this mode samples a random subset of gradient coordinates (~100 values) and proves bounds on the sample. This provides probabilistic soundness with constant proving time.
+**Modes** (`fl.privacy`): `ZKPMode`, `ZKPSampledMode`, `HeElGamalZKPMode`, `HeElGamalZKPSampledMode`; the commit–challenge protocol is `fl.privacy.commit_challenge.CommitChallengeMixin`.
 
 ---
 
-### 9. Performance Characteristics
+## 10. Results, outcomes and the ledger
 
-#### Latency (healthcare dataset, macOS Apple Silicon M-series)
+Each run's `benchmark.json` records:
 
-| Operation | Time | Notes |
-|-----------|------|-------|
-| Proof generation (100 sampled params) | 15–45s | Includes circuit compilation on first call |
-| Proof generation (cached circuit) | 5–20s | After first call for same layer shape |
-| Proof verification (`/verify`) | 2–15 ms | Constant, independent of layer size |
-| Service startup | < 1s | Just binary startup |
-| Circuit compilation (first call) | 30–90s | One-time per (shape, bound_sq) pair |
+- `transport`: `network` (real server and client processes) or `simulated` (in-process Flower simulation, where HE modes transport plaintext; such results are marked `[SIM]` in reports and never replace a networked result in the dataset report);
+- `zkp_backend`: `gnark`, `pedersen`, or `null` for modes without ZKP;
+- `round_outcomes`, one entry per Flower round:
 
-#### Communication Overhead
+| Field | Meaning |
+|---|---|
+| `outcome` | `aggregated`, `committed` (commit round), `no_quorum`, `infrastructure_abort`, `unverified_stub` |
+| `admitted`, `rejected` | client ids; rejection reasons per client |
+| `flower_failures` | clients whose fit call failed |
+| `key_manifest_sha256` | the pinned keys the proofs were checked under |
+| `update_norms`, `clipped` | each client's update norm before clipping, and which clients were clipped |
+| `sample_seed`, `sampled_coordinates` | sampled modes: the challenge seed and sample size |
 
-| Per-layer proof overhead | Size |
-|-------------------------|------|
-| `proof_b64` | ~650 bytes |
-| `hash_hex` | ~64 bytes (32-byte hash, hex-encoded) |
-| JSON framing overhead | ~50 bytes per layer |
-| **Total per layer** | **~764 bytes** |
-| **Full model (6 layers)** | **~4.6 KB** |
+`compare.py` validates ZKP runs: a run with rejected clients, aborted rounds, Flower failures or missing outcomes is reported as failed.
 
-Compare to HE upload overhead: ~244 MB (TenSEAL CKKS). ZKP communication overhead is negligible.
-
-#### Memory Usage
-
-| Component | Memory |
-|-----------|--------|
-| Service idle | ~50 MB |
-| After first proof (circuit cached) | ~200–500 MB |
-| Multiple cached circuits | ~200 MB × number of distinct layer shapes |
+The audit ledger (`fl/chain.py`) writes a `ModelCommit` for every round that updated the model and a `ProofAnchor` with SHA-256 hashes of the admitted proof payloads. Payloads include the verifying-key hash and declared bounds, so an anchored proof can be re-verified with the committed verifying key. Nothing is written for rounds that did not update the model.
 
 ---
 
-### 10. Using gnark Modes in the Framework
+## 11. Performance
 
-#### Via the Compare Runner (recommended)
+### 11.1 Single proofs
 
-```bash
-## Single ZKP mode
-python -m compare.runner --dataset healthcare --modes zkp_sampled
+Apple M3 Pro, 18 GB RAM, services warm, one proof at a time, production keys (2026-09-15):
 
-## All ZKP-containing modes
-python -m compare.runner --dataset healthcare --modes zkp_sampled,he_tenseal_zkp,he_concrete_tfhe_zkp
+| Circuit | Constraints | Prove (median) | Verify (median) | Proof size |
+|---|---|---|---|---|
+| Norm, n = 256 | 103,365 | 0.65 s | 2.3 ms (light), 3.6 ms (hash recomputed) | 220 base64 characters |
+| ElGamal, n = 128 | 1,274,949 | 3.13 s | 7.4 ms | 220 base64 characters, plus 64 bytes of ciphertext per coordinate |
 
-## Full 10-mode comparison (gnark service auto-started)
-python -m compare.runner --dataset healthcare --modes all
-```
+Setup (same machine): norm 5.0 s, proving key 36.1 MB, verifying key 520 B; ElGamal 50.5 s, proving key 420.2 MB, verifying key 33.4 KB, peak memory about 2.4 GB.
 
-The runner (`compare/experiment.py`) automatically:
-1. Detects if any selected mode requires gnark
-2. Starts the gnark service process if not already running
-3. Shuts it down after the run completes
+### 11.2 Proofs per client per round
 
-#### Via Simulation Script
+- `zkp`: Σ over tensors of ⌈numel / 256⌉. Healthcare model (2,914 parameters): 15 proofs.
+- `he_elgamal_zkp`: Σ over tensors of ⌈numel / 128⌉. Healthcare: 26 proofs.
+- Sampled modes: ⌈s / 256⌉ or ⌈s / 128⌉ for s = ⌈rate · n⌉ sampled coordinates.
 
-```bash
-## Start gnark service manually first
-cd zkp_gnark_service && ./gnark_service &
+Proofs are generated one at a time per client by default (`FL_ZKP_PARALLELISM=1`); each proof already uses several cores inside the prover.
 
-## Then run
-export FL_ZKP_BACKEND=gnark
-python simulation.py simulation \
-  --zkp --zkp_backend gnark \
-  --rounds 3 --number_clients 2 --benchmark \
-  --save_results ./results/zkp_test/
-```
+### 11.3 End to end
 
-#### Via Client-Server Mode
+Healthcare, 3 clients proving concurrently on one machine (the M3 Pro above), 3 rounds, 1 local epoch, measured with the norm circuit before its int64 range check was added (86,725 constraints; per-proof prove time then 0.64 s, now 0.65 s):
 
-Terminal 1 (server):
-```bash
-export FL_ZKP_BACKEND=gnark
-python main_server.py server --zkp --zkp_backend gnark \
-  --rounds 3 --number_clients 2
-```
+| Mode | Proof generation per client per round | Verification per client per round |
+|---|---|---|
+| `zkp` | 15.4 s | 0.06 s |
+| `zkp_sampled` (10 %) | 2.1 s | 0.01 s |
+| `he_elgamal_zkp` | 227 s | 0.21 s |
+| `he_elgamal_zkp_sampled` (10 %) | 24.0 s | 0.02 s |
 
-Terminal 2 (gnark service):
-```bash
-cd zkp_gnark_service && ./gnark_service
-```
-
-Terminal 3+ (clients):
-```bash
-export FL_ZKP_BACKEND=gnark
-python main_client.py client --zkp --zkp_backend gnark \
-  --id_client 0
-```
-
-#### Environment Variables
-
-| Variable | Default | Values | Description |
-|----------|---------|--------|--------------|
-| `FL_ZKP_BACKEND` | `gnark` | `gnark`, `pedersen` | Proof backend. `gnark` = Groth16 zk-SNARK (recommended); `pedersen` = legacy commitment (no soundness guarantee) |
-| `FL_ZKP_SERVICE_URL` | `http://127.0.0.1:9000` | Any URL | gnark HTTP service endpoint |
-| `FL_ZKP_SCALE` | `1000000` | Positive integer | Float→int64 quantization scale. Higher = more precision; too high = integer overflow |
-| `FL_ZKP_MAX_NORM` | `100.0` | Positive float | Max allowed L2 norm of the gradient vector encoded in the proof circuit |
-| `FL_ZKP_TIMEOUT` | `120` | Positive integer (s) | HTTP request timeout for each proof call. Increase for large models or slow hardware |
-| `FL_ZKP_LAYERS` | `ALL` | `ALL` or CSV layer names | Which layers to prove when using the full (non-sampled) ZKP mode. `ALL` proves every layer |
-| `FL_ZKP_SELECT_BY` | `size` | `size`, `random` | Layer selection strategy for `zkp_sampled`. `size` picks the layers with the most parameters (strongest coverage of the norm bound); `random` samples uniformly (varies across rounds) |
-| `FL_ZKP_NUM_LAYERS` | `1` | Positive integer | Number of layers to sample per client per round. Lower = faster proofs, weaker per-round coverage. Mutually exclusive with `FL_ZKP_SAMPLE_PCT` (takes priority if both set) |
-| `FL_ZKP_SAMPLE_PCT` | — | Float 0–1 | Fraction of layers to sample (ceiling). Alternative to `FL_ZKP_NUM_LAYERS`; useful when layer count varies across model architectures |
-| `FL_ZKP_SAMPLE_SEED` | — | Integer | Fixes the random seed for layer sampling. Set for reproducible benchmarks; omit for random variation across rounds |
-| `FL_ZKP_PARALLELISM` | `4` | Positive integer | Number of concurrent proof workers sent to the gnark service. Scaling above the gnark host's CPU count has diminishing returns |
+Concurrent proving on shared cores is slower per proof than the single-proof figures (about 7.4 s per ElGamal proof here).
 
 ---
 
-### 11. Dataset-Specific Notes
+## 12. Configuration
 
-#### Healthcare Dataset (918 samples, 13 features)
-- Model: ~small fully-connected network
-- Layer sizes: small (hundreds of parameters per layer)
-- Proving time per round: ~15–45s (per client)
-- Recommended: `zkp_sampled` mode for faster iteration
-
-#### Credit Card Fraud Detection (284k samples, 30 features)
-- Larger, so more gradient dimensions
-- With subsampling (`--subsample 5000`): similar to healthcare
-- Full dataset: proof generation ~12–18 minutes per round
-- Recommended: `zkp_sampled` with a subset for development
-
-#### CIFAR-10 (ResNet-style models)
-- Large models with millions of parameters
-- `zkp_sampled` is mandatory at scale (< 200 params sampled)
-- Alternatively, prove only the final classification layer (`FL_ZKP_LAYERS=fc3.weight,fc3.bias`)
-
----
-
-### 12. Security Model
-
-#### What the Proof Guarantees
-
-| Guarantee | Provided? | Notes |
-|-----------|-----------|-------|
-| Client holds the weight vector claimed | ✓ | MiMC hash preimage |
-| Weight vector norm ≤ bound | ✓ | Sum-of-squares constraint |
-| Client actually trained on their own data | ✗ | Not encoded in the circuit |
-| Proof is unforgeable | ✓ | Groth16 soundness under BN254 discrete log |
-| Proof reveals nothing about weights | ✓ | Groth16 zero-knowledge property |
-| Server cannot forge a proof | ✓ | Knowledge soundness |
-
-#### Trusted Setup
-
-Groth16 requires a **Structured Reference String (SRS)** containing toxic waste $(\alpha, \beta, \gamma, \delta, \tau)$ that must be destroyed after setup. In this implementation:
-
-- The SRS is generated fresh per circuit definition by gnark
-- It is **not** generated via a public multi-party ceremony
-- For research and experimental purposes, this is acceptable
-- For production deployment, a proper Powers-of-Tau ceremony should be used
-
-#### Threat Model Coverage
-
-| Adversary Type | Mode | Protected? |
-|---------------|------|-----------|
-| Honest-but-curious server | `he_tenseal` / `he_concrete_tfhe` | ✓ |
-| Malicious client (poisoned gradients) | `zkp_sampled` | ✓ (norm bound) |
-| Malicious client + HBC server | `he_tenseal_zkp` / `he_concrete_tfhe_zkp` | ✓ both |
-| Statistical reconstruction at test time | `dp` | ✓ |
-
-#### Cryptographic Assumptions
-
-The security of Groth16 rests on:
-1. **Discrete logarithm hardness** on BN254 (254-bit security level)
-2. **Bilinear assumptions** (BN254 is a type-3 pairing curve): d-power-of-tau and related assumptions
-3. **Knowledge of exponent assumption**: for knowledge soundness
-
-> ⚠️ BN254 provides ~128-bit classical security but is **not post-quantum secure** (unlike the RLWE-based HE schemes). An adversary with a large-scale quantum computer could forge proofs.
+| Variable | Default | Description |
+|---|---|---|
+| `FL_ZKP_BACKEND` | `gnark` | `gnark`, or `pedersen` (unverified stub) |
+| `FL_ZKP_ALLOW_PEDERSEN_STUB` | unset | `1` allows the Pedersen stub |
+| `FL_ZKP_MAX_NORM` | calibrated | Update-norm bound B, overriding the per-dataset calibration |
+| `FL_ZKP_SCALE` | `1000000` | Norm-circuit quantization scale |
+| `FL_ELGAMAL_SCALE` | `10000` | ElGamal quantization scale; \|w\| · scale < 2¹⁷ |
+| `FL_ZKP_SAMPLE_PCT` | `0.1` | Sampled modes: fraction of coordinates proven, in (0, 1] |
+| `FL_ZKP_PARALLELISM` | `1` | Proofs generated concurrently per client |
+| `FL_ZKP_LAYERS` | `ALL` | Tensors to prove. Anything but `ALL` fails the server's coverage check |
+| `FL_ZKP_PROVER_URL` | `http://127.0.0.1:9000` | Prover service |
+| `FL_ZKP_VERIFIER_URL` | `http://127.0.0.1:9001` | Verifier service |
+| `FL_ZKP_KEYS_DIR` | `zkp_gnark_service/keys` | Manifest and verifying keys |
+| `FL_ZKP_PK_DIR` | `~/.cache/fl_ppml/gnark_pk` | Proving keys (prover only) |
+| `FL_ZKP_TIMEOUT` | `600` | Fallback HTTP timeout, seconds |
+| `FL_ZKP_PROVE_TIMEOUT` | `1800` | Prove request timeout |
+| `FL_ZKP_VERIFY_TIMEOUT`, `FL_ZKP_VERIFY_LIGHT_TIMEOUT` | `900` | Verify request timeouts |
+| `FL_ZKP_MAX_RSS_MB` | 70 % of RAM | Client memory guard during proof generation |
+| `FL_ZKP_AGGRESSIVE_GC`, `FL_ZKP_GC_SLEEP_MS` | `1`, `0` | Garbage collection between proofs |
+| `FL_CLIENT_WAIT_TIMEOUT` | `600` | Seconds the server waits for `min_avail_clients` before stopping the run |
+| `FL_SERVER_GRACE` | `600` | Harness: seconds a server may run after all clients exited (60 s if any client failed) |
 
 ---
 
-### 13. Configuration Reference
+## 13. Limitations
 
-#### Quick Config Cheat Sheet
-
-```bash
-## Minimal setup — run from fl_ppml/
-export FL_ZKP_BACKEND=gnark
-export FL_ZKP_SERVICE_URL="http://127.0.0.1:9000"
-export FL_ZKP_SCALE=1000000
-export FL_ZKP_MAX_NORM=100.0
-export FL_ZKP_TIMEOUT=120
-export FL_ZKP_LAYERS=ALL
-```
-
-#### Tuning `FL_ZKP_SELECT_BY`
-
-Controls which layers are selected when using `zkp_sampled` mode.
-
-| Value | Behaviour | When to use |
-|-------|-----------|-------------|
-| `size` (default) | Selects the `FL_ZKP_NUM_LAYERS` layers with the most parameters | Maximum norm-bound coverage per proof; best for production security |
-| `random` | Samples layers uniformly at random each round | Rotating coverage across rounds; useful for research into proof diversity |
-
-Example — prove only the two largest layers:
-```bash
-export FL_ZKP_SELECT_BY=size
-export FL_ZKP_NUM_LAYERS=2
-```
-
-#### Tuning `FL_ZKP_NUM_LAYERS` and `FL_ZKP_SAMPLE_PCT`
-
-These two variables both govern how many layers get proven per round in `zkp_sampled` mode. Only one should be set; `FL_ZKP_NUM_LAYERS` takes priority if both are present.
-
-| Setting | Proof time | Security |
-|---------|-----------|----------|
-| `FL_ZKP_NUM_LAYERS=1` (default) | Fastest (~22s for a 2-layer model) | One layer norm bound proven per round |
-| `FL_ZKP_NUM_LAYERS=2` | ~2× slower | Full model norm bound per round |
-| `FL_ZKP_SAMPLE_PCT=0.5` | Proves 50% of layers (ceiling) | Scales with model size automatically |
-
-For a 2-layer model (`model.0.weight`, `model.0.bias`), `FL_ZKP_NUM_LAYERS=1` with `FL_ZKP_SELECT_BY=size` always proves `model.0.weight` (the weight matrix has far more parameters than the bias).
-
-#### Tuning `FL_ZKP_PARALLELISM`
-
-Sets the thread pool size used to dispatch proof requests to the gnark service concurrently.
-
-```bash
-## Default: 4 workers (good for Apple M-series, typical Linux dev boxes)
-export FL_ZKP_PARALLELISM=4
-
-## Maximize throughput on a high-core-count server
-export FL_ZKP_PARALLELISM=16
-
-## Serial proving (debug: isolate timing per layer)
-export FL_ZKP_PARALLELISM=1
-```
-
-Setting this higher than the gnark host's CPU count yields minimal benefit and increases memory pressure on the service. The gnark service is the bottleneck, not the Python thread pool.
-
-#### Tuning `FL_ZKP_TIMEOUT`
-
-Increase for:
-- Large models (many parameters → slower proving)
-- Slower hardware (no M-series Apple Silicon / no GPU)
-- First run (circuit compilation included in first request latency)
-
-```bash
-## For large models or slow hardware
-export FL_ZKP_TIMEOUT=600
-
-## For fast CI tests with tiny models
-export FL_ZKP_TIMEOUT=30
-```
-
-#### Tuning `FL_ZKP_SCALE`
-
-The scale converts floating-point weights to integers. Too low = precision loss. Too high = integer overflow.
-
-| Weight magnitude | Recommended scale |
-|-----------------|------------------|
-| Very small (-0.01 to 0.01) | 1,000,000 (10^6) |
-| Typical (-1.0 to 1.0) | 100,000 (10^5) |
-| Large (-10 to 10) | 10,000 (10^4) |
-
-The default `1,000,000` works for standard neural network weights.
-
-#### Tuning `FL_ZKP_MAX_NORM`
-
-This is the maximum allowed $\ell_2$ norm of the gradient update vector. Set equal to the DP clipping norm if using both DP and ZKP (they share the same bound):
-
-```bash
-## DP clipping norm = 1.0 (strong privacy)
-export FL_ZKP_MAX_NORM=1.0
-
-## Standard federated learning
-export FL_ZKP_MAX_NORM=100.0
-```
+- **Direction is not bounded.** An admitted client can move the global model by up to (nₖ / N) · (B + slack) per round in any direction. A clipped malicious update is admitted; robust aggregation is not part of this framework.
+- **The bound is calibrated, not derived.** It is loose where clients take many steps, and can clip honest clients in configurations with fewer steps than any calibrated one ([4.2](#42-choosing-b)).
+- **Single-party trusted setup** ([7.3](#73-what-a-single-party-setup-does-and-does-not-give)).
+- **Shared client key.** In the ElGamal modes every client can decrypt every aggregate.
+- **Per-chunk leakage in `he_elgamal_zkp`.** Declared chunk bounds are public, so the server learns the squared norm of the update restricted to each chunk of 128 coordinates.
+- **Sampled modes** prove nothing about unsampled coordinates.
+- **CKKS/TFHE composites** provide no integrity ([6.5](#65-cksstfhe-composites)).
+- **Client identity** is not a public input: proofs are bound to a round, position, ciphertext and global model, not to a client.
+- **Not post-quantum.** BN254 pairings and BabyJubJub discrete logarithms fall to a large quantum computer.
+- **Honest training is not proven.** A bounded update may come from any data or procedure.
 
 ---
 
-### 14. Troubleshooting
+## 14. Troubleshooting
 
-#### Service Won't Start
-
-```bash
-## Check port is free
-lsof -i :9000
-
-## Kill existing process
-kill -9 $(lsof -ti :9000)
-
-## Verify Go version (needs 1.21+)
-go version
-
-## Rebuild if binary is stale
-cd zkp_gnark_service
-go build -o gnark_service main.go
-
-## macOS: fix quarantine if binary was downloaded (not compiled locally)
-xattr -d com.apple.quarantine gnark_service
-chmod +x gnark_service
-```
-
-#### Proof Generation Times Out
-
-```bash
-## Increase timeout
-export FL_ZKP_TIMEOUT=600
-
-## If still timing out, check service logs
-tail -f /tmp/gnark_service.log
-
-## Use sampled mode to reduce circuit size
-python -m compare.runner --modes zkp_sampled   # not full zkp
-```
-
-#### `proof_verification = 0.0` in Benchmark Results
-
-This means the server is not calling `/verify` — usually because the ZKP backend fell back to Pedersen (which has no server verifier in the gnark path). Fix:
-
-```bash
-## Ensure gnark backend is set
-export FL_ZKP_BACKEND=gnark
-
-## Or use the CLI flag
-python main_server.py server --zkp --zkp_backend gnark ...
-```
-
-#### Proof Verification Fails (`verified: false`)
-
-Most common cause: `FL_ZKP_SCALE` differs between client and server. Both must use the same scale value. Check:
-
-```bash
-## Both client and server processes must see the same value
-echo $FL_ZKP_SCALE
-```
-
-Other causes:
-- Network corruption of proof bytes (rare)
-- Client sent gradients after local normalization at a different scale than expected
-
-#### OOM (Out of Memory) on macOS
-
-Reduce circuit memory by proving fewer layers at once:
-```bash
-## Only prove the final classification layer
-export FL_ZKP_LAYERS="fc3.weight,fc3.bias"
-```
-
-Or use sampled mode (100 random parameters):
-```bash
-python -m compare.runner --modes zkp_sampled
-```
-
----
-
-### 15. gnark vs. Legacy Pedersen Backend
-
-The framework includes a **legacy Pedersen commitment** backend (`FL_ZKP_BACKEND=pedersen`). It was the original ZKP implementation and is superseded by gnark.
-
-| Property | gnark (Groth16) | Pedersen (Legacy) |
-|----------|----------------|------------------|
-| **Proof type** | zk-SNARK (Groth16 on BN254) | Commitment scheme |
-| **Proof size** | ~650 bytes per layer | ~1–2 MB per layer |
-| **Proof generation** | 1.5–45s (depends on circuit) | ~93s per layer |
-| **Verification time** | 2–15 ms | ~85 ms |
-| **Security model** | Zero-knowledge + soundness (crypto) | Computational hiding |
-| **Infrastructure** | Go HTTP service required | Python-native, no service |
-| **Setup** | Build Go binary | `python -m fl.keys generate zkp --output zkp_params.pkl` |
-| **Norm bound proof** | ✓ Explicit circuit constraint | ✗ Not implemented |
-| **Post-quantum** | ✗ BN254 is pre-quantum | ✗ |
-| **Status** | ✅ Active default | ⚠️ Legacy, unsupported |
-
-#### When to use Pedersen (Legacy)
-
-Only if the gnark service cannot be compiled or run (e.g., no Go installation, restricted environment). Use `FL_ZKP_BACKEND=pedersen` and generate params first:
-```bash
-python -m fl.keys generate zkp --output zkp_params.pkl  # generates zkp_params.pkl
-export FL_ZKP_BACKEND=pedersen
-```
-
-For all other cases, use gnark.
-
----
-
-*See also: [ZKP.md](ZKP.md) for a one-page reference card*  
-*See also: [ZKP.md](ZKP.md) for ZKP theory and FL integration concepts*  
-
-
-
----
-
-## gnark ZKP Backend - Quick Reference
-
-### ⚡ 30-Second Setup
-
-```bash
-## 1. Build service
-cd fl_ppml/zkp_gnark_service
-go mod download && go build -o gnark_service main.go
-
-## 2. Start service (keep running)
-./gnark_service
-
-## 3. In another terminal, run FL
-export FL_ZKP_BACKEND=gnark
-cd ../
-python simulation.py simulation --zkp --zkp_backend gnark --rounds 3 --benchmark
-```
-
-### 🔧 Configuration
-
-| Variable | Default | Purpose |
-|----------|---------|---------|
-| `FL_ZKP_BACKEND` | `gnark` | Backend: `gnark` or `pedersen` |
-| `FL_ZKP_SERVICE_URL` | `http://127.0.0.1:9000` | Proof service endpoint |
-| `FL_ZKP_SCALE` | `1000000` | Quantization scale for weights |
-| `FL_ZKP_MAX_NORM` | `100.0` | Max gradient norm for proof |
-| `FL_ZKP_TIMEOUT` | `120` | Service call timeout (seconds) |
-| `FL_ZKP_LAYERS` | `ALL` | Layers to prove (CSV or `ALL`) |
-| `FL_ZKP_SELECT_BY` | `size` | Sampling strategy: `size` or `random` |
-| `FL_ZKP_NUM_LAYERS` | `1` | Number of layers to sample per round |
-| `FL_ZKP_SAMPLE_PCT` | — | Fraction of layers to sample (alt. to `NUM_LAYERS`) |
-| `FL_ZKP_SAMPLE_SEED` | — | Fixed seed for deterministic layer selection |
-| `FL_ZKP_PARALLELISM` | `4` | Parallel proof workers (threads) |
-
-### 📊 Service Endpoints
-
-| Endpoint | Method | Purpose |
-|----------|--------|---------|
-| `/prove` | POST | Generate proof for layer weights |
-| `/verify` | POST | Verify proof against public values |
-| `/health` | GET | Service health check |
-
-### ✅ Verify Setup
-
-```bash
-## Check service is running
-curl http://127.0.0.1:9000/health
-
-## Test proof generation
-python3 << 'EOF'
-from core.zkp_gnark import generate_gnark_proofs
-import numpy as np
-
-params = {'layer0': np.random.randn(100).astype(np.float32)}
-proofs, size = generate_gnark_proofs(params)
-print(f"✓ Service working! Generated {len(proofs)} proof(s), {size} bytes")
-EOF
-```
-
-### 🐛 Common Issues & Fixes
-
-| Issue | Fix |
-|-------|-----|
-| `Connection refused` | Start service: `./gnark_service` |
-| `Timeout during proof generation` | Increase `FL_ZKP_TIMEOUT=300` |
-| `Proof verification failed` | Check `FL_ZKP_SCALE` is same on client & server |
-| `Port 9000 already in use` | `lsof -i :9000` then `kill -9 <PID>` |
-| `Out of memory` | Reduce batch size or increase system RAM |
-
-### 📈 Expected Performance
-
-| Operation | Time | Size |
-|-----------|------|------|
-| Proof generation (10k params) | 1.2s | 650 bytes |
-| Proof verification | 15ms | - |
-| Per-layer overhead | ~0.5s | ~130-650 bytes |
-| Network latency | Negligible | Fit in single TCP packet |
-
-### 🏗️ Architecture
-
-```
-Client                          Service                    Server
-┌─────────────┐                ┌─────────┐               ┌──────────┐
-│   Train     │─────→ weights  │ /prove  │─────→ proof   │ /verify  │
-│   Generate  │  POST          │         │                │ Aggregate│
-│   Proof     │                │ Circuit │                │          │
-└─────────────┘                └─────────┘               └──────────┘
-```
-
-### 📚 Documentation
-
-- **Full Guide**: See [ZKP.md](ZKP.md)
-- **Setup Instructions**: See [ZKP.md](ZKP.md)
-- **Technical Details**: Circuit design, performance tuning in [ZKP.md](ZKP.md)
-
-### 💡 Pro Tips
-
-1. **Batch Proofs**: Prove multiple layers in one call for better throughput
-2. **Layer Selection**: Use `FL_ZKP_LAYERS=fc1.weight,fc2.weight` to skip small layers
-3. **Caching**: Service caches compiled circuits per shape—reuse layer sizes
-4. **Monitoring**: Check service logs with `tail -f /tmp/gnark_service.log`
-5. **Fallback**: If service fails, set `FL_ZKP_BACKEND=pedersen` to revert
-
-### 🚀 Deployment Options
-
-| Mode | Command | Best For |
-|------|---------|----------|
-| **Local** | `./gnark_service` | Development |
-| **Docker** | `docker run -p 9000:9000 fhe-zkp-service` | Testing |
-| **Docker Compose** | `docker compose up` | Multi-service |
-| **Production** | Kubernetes + monitoring | Scaling |
-
----
-
-**Last Updated**: Jan 2024 | **Service Version**: gnark v0.10.0
+| Symptom | Cause | Fix |
+|---|---|---|
+| `No pinned ZKP key manifest` | Keys never generated | Run `gnark_service setup` ([7.1](#71-setup)) |
+| `Proving keys [...] not in ...` | Fresh checkout: proving keys are not committed | Run `setup --force` and commit the new `keys/` |
+| Service exits at start with a hash mismatch | Key files differ from the manifest | Restore the committed `keys/` or regenerate with `setup --force` |
+| HTTP 503 on verification, round `infrastructure_abort` | Verifier started from other keys | Restart the services from the committed `keys/` |
+| `no calibrated ZKP update-norm bound for dataset` | Dataset missing from `PER_STEP_UPDATE_NORM` | Run `scripts/calibrate_update_norm.py` and add the value, or set `FL_ZKP_MAX_NORM` |
+| Many clients listed in `clipped` | Configuration takes fewer steps than calibrated, or DP noise | Recalibrate for the configuration, or set `FL_ZKP_MAX_NORM` |
+| `declared update bounds sum to ... above the server's bound` | The client did not clip (not the framework client), or client and server use different bounds | Clients must use the bound from the server's fit configuration |
+| `|w|·scale must be < 131072` | ElGamal: a weight too large for the scale | Lower `FL_ELGAMAL_SCALE` |
+| `total weight ... ≥ 16384` | ElGamal: clients' batch counts sum too high | Fewer clients or larger batches |
+| `ZKP memory guard triggered` | Client RSS above the guard | `FL_ZKP_PARALLELISM=1`, or raise `FL_ZKP_MAX_RSS_MB` |
+| `round N fit: only k of m required clients available` | Clients did not connect within `FL_CLIENT_WAIT_TIMEOUT` | Check client logs, or raise the timeout |

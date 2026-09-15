@@ -834,9 +834,11 @@ This is managed in the framework by ensuring all client ciphertexts use the same
 
 #### 4.1 Context Management
 
+The framework stores contexts as raw bytes behind a short header (`fl.keys.he_tenseal`), never with pickle: unpickling a swapped key file can execute code.
+
 ```python
 import tenseal as ts
-import pickle
+from fl.keys.he_tenseal import read_context_bytes, write_context
 
 ## --- Creating a context ---
 context = ts.context(
@@ -851,18 +853,13 @@ context.generate_galois_keys()   # for rotations
 context.generate_relin_keys()    # for multiplication
 
 ## --- Saving the full context (with secret key) ---
-with open("secret.pkl", "wb") as f:
-    pickle.dump(context.serialize(save_secret_key=True), f)
+write_context("keys/he_tenseal/secret_context.bin", context.serialize(save_secret_key=True))
 
 ## --- Creating a server-side context (no secret key) ---
-server_ctx_bytes = context.serialize(save_secret_key=False)
-with open("server_key.pkl", "wb") as f:
-    pickle.dump(server_ctx_bytes, f)
+write_context("keys/he_tenseal/public_context.bin", context.serialize(save_secret_key=False))
 
 ## --- Loading a context ---
-with open("secret.pkl", "rb") as f:
-    ctx_bytes = pickle.load(f)
-context = ts.context_from(ctx_bytes)  # restores with secret key
+context = ts.context_from(read_context_bytes("keys/he_tenseal/secret_context.bin"))  # restores with secret key
 
 ## --- Checking context properties ---
 print(context.is_private())    # True if has secret key
@@ -1069,35 +1066,28 @@ This typically means:
 
 #### 7.1 Key Generation (fl.keys CLI / programmatic example)
 
-```python
-import tenseal as ts
-import pickle
-
-## Create CKKS context with full parameters
-context = ts.context(
-    ts.SCHEME_TYPE.CKKS,
-    poly_modulus_degree=8192,
-    coeff_mod_bit_sizes=[60, 40, 40, 60]
-)
-context.global_scale = 2**40
-context.generate_galois_keys()
-context.generate_relin_keys()
-
-## Save full context (clients need secret key for decryption)
-with open("secret.pkl", "wb") as f:
-    pickle.dump(context.serialize(save_secret_key=True), f)
-
-## Save server context (no secret key)
-with open("server_key.pkl", "wb") as f:
-    pickle.dump(context.serialize(save_secret_key=False), f)
+```bash
+python -m fl.keys generate he_tenseal
+## writes keys/he_tenseal/secret_context.bin (clients) and keys/he_tenseal/public_context.bin (server)
 ```
+
+Programmatically:
+
+```python
+from fl.keys.he_tenseal import generate
+
+generate(secret_path="keys/he_tenseal/secret_context.bin", public_path="keys/he_tenseal/public_context.bin")
+```
+
+Loaders refuse anything that isn't a key file of this format, including legacy pickle files.
 
 #### 7.2 Client Side (`client.py`)
 
 ```python
 ## Load context with secret key
-with open("secret.pkl", "rb") as f:
-    context = ts.context_from(pickle.load(f))
+from fl.keys.he_tenseal import load_client
+
+context = load_client("keys/he_tenseal/secret_context.bin")
 
 ## After local training — encrypt gradient update
 def encrypt_parameters(state_dict, context):
@@ -1124,9 +1114,10 @@ def decrypt_parameters(encrypted_dict, context, model_shapes):
 #### 7.3 Server Side (`server.py`)
 
 ```python
-## Load evaluation context (NO secret key)
-with open("server_key.pkl", "rb") as f:
-    server_context = ts.context_from(pickle.load(f))
+## Load evaluation context (NO secret key); refuses a file that contains one
+from fl.keys.he_tenseal import load_server
+
+server_context = load_server("keys/he_tenseal/public_context.bin")
 
 def aggregate_he_tenseal(encrypted_updates: list[dict]) -> dict:
     """
@@ -1699,8 +1690,8 @@ circuit.keygen()
 
 ## Serialize keys for reuse
 key_bytes = circuit.serialize_lwe_secret_key()
-with open("fhe_key.pkl", "wb") as f:
-    pickle.dump(key_bytes, f)
+with open("fhe_key.bin", "wb") as f:
+    f.write(key_bytes)
 
 ## Quantize input (convert float → int)
 x_q = model.quantize_input(X_test[:1])
@@ -1866,7 +1857,6 @@ def build_concrete_model(n_bits=8):
 
 ```python
 from concrete.ml.sklearn import SGDClassifier
-import pickle
 
 def compile_concrete_model(model, X_calib):
     """Compile model to FHE circuit and generate keys."""
@@ -1879,8 +1869,8 @@ def compile_concrete_model(model, X_calib):
     
     # The evaluation key (needed by server) is embedded in circuit
     # Serialize for storage
-    with open("concrete_circuit.pkl", "wb") as f:
-        pickle.dump(circuit.serialize(), f)
+    with open("concrete_circuit.bin", "wb") as f:
+        f.write(circuit.serialize())
     
     return circuit
 ```
@@ -2179,7 +2169,7 @@ All HE behaviour is controlled by environment variables so configurations can be
 
 | Variable | Default | Values | Applies to |
 |----------|---------|--------|-----------|
-| `FL_ENCRYPT_LAYERS` | `model.0.weight,model.0.bias` | CSV layer names or `ALL` | TenSEAL, Concrete |
+| `FL_ENCRYPT_LAYERS` | `ALL` | CSV layer names or `ALL` | TenSEAL |
 | `FL_CONCRETE_TFHE_BIT_WIDTH` | `14` | Integer 2–16 | Concrete TFHE only |
 | `FL_CONCRETE_TFHE_ADAPTIVE_QUANT` | `0` | `0`, `1` | Concrete TFHE only |
 
@@ -2187,24 +2177,24 @@ All HE behaviour is controlled by environment variables so configurations can be
 
 ### `FL_ENCRYPT_LAYERS`
 
-**Default:** `model.0.weight,model.0.bias`
+**Default:** `ALL`
 **Values:** Comma-separated layer names, or `ALL`
 
 Determines which model layers are encrypted before upload to the server.
 
 | Value | Privacy | Bandwidth | Latency |
 |-------|---------|-----------|---------|
-| `ALL` | Full gradient privacy — every layer is ciphertext | Maximum (all layers expanded by HE overhead) | Maximum encryption time |
-| `model.0.weight,model.0.bias` (default) | First layer encrypted; remaining layers in plaintext | Expansion only for those layers | Selective — just the first layer |
+| `ALL` (default) | Full gradient privacy — every layer is ciphertext | Maximum (all layers expanded by HE overhead) | Maximum encryption time |
+| `model.0.weight,model.0.bias` | First layer encrypted; remaining layers in plaintext | Expansion only for those layers | Selective — just the first layer |
 | Single layer e.g. `model.0.weight` | Weight matrix encrypted; bias in plaintext | Smallest encrypted payload | Fastest partial encryption |
 
 > **Security note**: Encrypting only some layers leaks the plaintext gradient values of the unencrypted layers to the server. This is acceptable when those layers carry low information (e.g., scalar bias terms) but is not full gradient confidentiality. Use `ALL` for complete protection.
 
 ```bash
-## Encrypt everything (full privacy, maximum bandwidth)
+## Default: encrypt everything (full privacy, maximum bandwidth)
 export FL_ENCRYPT_LAYERS=ALL
 
-## Default — first dense layer only (good balance for small models)
+## First dense layer only: the other layers are sent in plaintext
 export FL_ENCRYPT_LAYERS=model.0.weight,model.0.bias
 
 ## Encrypt only the weight matrix, skip bias
@@ -2212,7 +2202,7 @@ export FL_ENCRYPT_LAYERS=model.0.weight
 ```
 
 **Impact on results:**
-- TenSEAL: each encrypted layer adds ~244 MB to the upload payload (CKKS ciphertext expansion). Encrypting 1 layer vs. `ALL` (4 layers for a typical model) cuts bandwidth ~4×.
+- TenSEAL: each encrypted layer adds its CKKS ciphertext expansion to the upload, so encrypting fewer layers cuts bandwidth roughly in proportion to their share of the parameters. Names that are not layers of the model are an error, so a misspelled layer can't silently leave the model in plaintext.
 - Concrete TFHE: smaller ciphertexts (~17 MB per layer), but encryption time scales linearly with the number of encrypted layers.
 - Accuracy: unaffected — HE encryption is exact (CKKS) or lossless at the given bit width (TFHE).
 

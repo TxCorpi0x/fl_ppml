@@ -30,19 +30,19 @@ This framework compares **ten** privacy-preserving federated learning modes:
 | **Baseline** | `baseline` | None | — |
 | **HE TenSEAL** | `he_tenseal` | CKKS (TenSEAL) | Gradient confidentiality (HBC server) |
 | **HE Concrete TFHE** | `he_concrete_tfhe` | TFHE (Concrete ML + quantization) | Gradient confidentiality |
-| **ZKP Sampled** | `zkp_sampled` | Groth16 zk-SNARK (gnark), sampled layers | Gradient integrity (Byzantine clients) |
-| **ZKP (full)** | `zkp` | Groth16 zk-SNARK (gnark), all layers | Gradient integrity — full coverage |
+| **ZKP Sampled** | `zkp_sampled` | Groth16 over server-sampled update coordinates (commit–challenge) | None beyond `zkp` (the server sees plaintext); benchmark of sampled proving cost |
+| **ZKP (full)** | `zkp` | Groth16 zk-SNARK (gnark), every coordinate of the update | Update-norm bound bound to the upload |
 | **DP** | `dp` | Gaussian noise — DP-SGD (Opacus) | Membership inference |
-| **HE TenSEAL + ZKP** | `he_tenseal_zkp` | CKKS + Groth16 | Confidentiality **+** Integrity |
-| **HE Concrete + ZKP** | `he_concrete_tfhe_zkp` | TFHE + Groth16 | Confidentiality **+** Integrity (bandwidth-efficient) |
-| **HE TenSEAL + ZKP + DP** | `he_tenseal_zkp_dp` | CKKS + Groth16 + DP | Full triad: Confidentiality **+** Integrity **+** Membership Privacy |
-| **HE Concrete + ZKP + DP** | `he_concrete_tfhe_zkp_dp` | TFHE + Groth16 + DP | Full triad — bandwidth-efficient variant |
+| **HE TenSEAL + ZKP** | `he_tenseal_zkp` | CKKS + Groth16 (not bound to the ciphertext) | Confidentiality only |
+| **HE Concrete + ZKP** | `he_concrete_tfhe_zkp` | TFHE + Groth16 (not bound to the ciphertext) | Confidentiality only |
+| **HE TenSEAL + ZKP + DP** | `he_tenseal_zkp_dp` | CKKS + Groth16 (unbound, no update bound) + DP | Confidentiality + membership privacy |
+| **HE Concrete + ZKP + DP** | `he_concrete_tfhe_zkp_dp` | TFHE + Groth16 (unbound, no update bound) + DP | Confidentiality + membership privacy |
 
 > **HBC** = Honest-But-Curious server: follows protocol but tries to infer private information from the gradients it aggregates.
 
 The two **triple modes** (`he_tenseal_zkp_dp` and `he_concrete_tfhe_zkp_dp`) represent the maximum practical privacy configuration:
 1. DP noise is injected during local training, privatizing the gradient before serialization
-2. Groth16 ZKP proves the noisy gradient's ℓ₂ norm is bounded, certifying client honesty
+2. Groth16 ZKP proves a statement about the plaintext update, but the proof is not bound to the ciphertext the server aggregates, so it certifies nothing about what is aggregated
 3. CKKS or TFHE encrypts the noisy, norm-bounded gradient for transit to the server
 
 This layering is composable and safe: each mechanism operates at a distinct pipeline stage.
@@ -55,10 +55,10 @@ This layering is composable and safe: each mechanism operates at a distinct pipe
 cd fl_ppml
 
 ## Generate HE keys (TenSEAL CKKS context)
-python -m fl.keys generate he_tenseal --secret keys/he_tenseal/secret_key.pkl --public keys/he_tenseal/public_key.pkl
+python -m fl.keys generate he_tenseal --secret keys/he_tenseal/secret_context.bin --public keys/he_tenseal/public_context.bin
 
 ## Generate DP parameters (ε=1.0, δ=1e-5)
-python -m fl.keys generate dp --output keys/dp/dp_params.pkl --epsilon 1.0 --delta 1e-5
+python -m fl.keys generate dp --output keys/dp/dp_params.json --epsilon 1.0 --delta 1e-5
 
 ## Build and start gnark proof service (required for ZKP modes)
 cd zkp_gnark_service
@@ -314,52 +314,41 @@ python simulation.py simulation \
 ## With specific privacy mode
 python simulation.py simulation --he --rounds 2 --benchmark
 python simulation.py simulation --zkp --zkp_backend gnark --benchmark
-python simulation.py simulation --dp --dp_params dp_params.pkl --benchmark
+python simulation.py simulation --dp --dp_params dp_params.json --benchmark
 ```
 
 ### Understanding Results
 
-#### Typical Performance Profile (healthcare dataset, 3 rounds, 3 clients, Apple Silicon)
+#### Performance figures
 
-| Mode | Accuracy | Upload/round | Total Time | Enc+Dec | Proof Gen | Notes |
-|------|----------|-------------|-----------|---------|----------|-------|
-| **baseline** | ~87.3% | 0.01 MB | ~45s (1×) | 0s | 0s | Reference |
-| **he_tenseal** | ~87.1% | **244.7 MB** | ~148s (3.3×) | ~1.5s | 0s | CKKS ciphertext expansion |
-| **he_concrete_tfhe** | ~84.8% | 17.8 MB | ~310s (6.9×) | ~5.3s | 0s | Quantization loss |
-| **zkp_sampled** | ~87.2% | 0.01 MB | ~520s (11.6×) | 0s | ~22.4s | Proving bottleneck |
-| **zkp** | ~87.2% | 0.01 MB | ~1200s | 0s | ~52s | All layers proven |
-| **dp** ε=1.0 | ~83.1% | 0.01 MB | ~48s (1.1×) | <0.1s | 0s | Noise loss |
-| **he_tenseal_zkp** | ~87.0% | **244.7 MB** | ~670s (14.9×) | ~1.8s | ~22.4s | Dual overhead |
-| **he_concrete_tfhe_zkp** | ~84.7% | 17.8 MB | ~480s (10.7×) | ~5.3s | ~22.4s | Best bandwidth+security |
-| **he_tenseal_zkp_dp** | ~82.8% | **244.7 MB** | ~675s | ~1.8s | ~22.4s | Full triad |  
-| **he_concrete_tfhe_zkp_dp** | ~82.3% | 17.8 MB | ~485s | ~5.3s | ~22.4s | Full triad, efficient |
+The stored results under `results/` predate the current ZKP protocols, key handling and fail-closed checks, so their timings and bandwidth figures describe older code; they will be regenerated. Current single-proof and per-round proof costs are in [ZKP.md, section 11](ZKP.md#11-performance).
 
 #### Key Observations
 
-**Bandwidth**: CKKS (TenSEAL) ciphertext expansion is ~24,000× over plaintext (0.01 MB → 244.7 MB). TFHE (Concrete) uses quantized int8 weights — 14× less bandwidth than CKKS.
+**Bandwidth**: CKKS (TenSEAL) ciphertexts are several orders of magnitude larger than the plaintext update. TFHE (Concrete) uses quantized integer weights and needs far less bandwidth than CKKS.
 
-**Latency**: ZKP proof generation dominates timing in ZKP-containing modes (~22s per client per round). Groth16 verification is cheap (~0.08s per client).
+**Latency**: Groth16 proof generation dominates ZKP-containing modes; verification is milliseconds per proof. Proofs per client per round depend on the model size (n = 256 values per norm proof, 128 coordinates per ElGamal proof).
 
-**Accuracy**: HE modes preserve accuracy (exact arithmetic, no noise). DP and TFHE modes trade accuracy for their respective benefits.
+**Accuracy**: HE modes preserve accuracy (exact arithmetic for CKKS up to approximation error). DP and TFHE modes trade accuracy for their respective benefits.
 
-**DP note**: DP is the fastest non-baseline mode (<0.1s crypto overhead) and the only one providing formal information-theoretic (ε-DP) guarantees against membership inference on the published model. All HE and ZKP modes rely on computational security under mathematical hardness assumptions.
+**DP note**: DP is the only mode providing a formal (ε, δ)-DP guarantee against membership inference on the published model. All HE and ZKP modes rely on computational hardness assumptions.
 
-**Triple modes**: The `he_tenseal_zkp_dp` and `he_concrete_tfhe_zkp_dp` modes provide all three guarantees simultaneously. Their total overhead is the sum of HE, ZKP, and DP overheads — approximately the same as `he_*_zkp` since DP noise addition takes <0.1s. The accuracy penalty is additive: TFHE quantization loss plus DP noise loss.
+**Composite modes**: In `he_*_zkp` and `he_*_zkp_dp` the proof is not bound to the ciphertext the server aggregates, so they provide confidentiality (plus DP in the `_dp` variants) but no integrity guarantee. Ciphertext-bound integrity is provided by `he_elgamal_zkp` and `he_elgamal_zkp_sampled`.
 
-### Implementation Status (March 2026)
+### Implementation Status
 
 | Mode | Status | Benchmarking | Chain Audit | Notes |
 |------|--------|-------------|-------------|-------|
 | baseline | ✅ Working | ✅ Full | ✅ ModelCommit | Reference mode |
 | he_tenseal | ✅ Working | ✅ Full | ✅ ModelCommit | CKKS via TenSEAL + MS SEAL |
 | he_concrete_tfhe | ✅ Working | ✅ Full | ✅ ModelCommit | TFHE via Concrete ML |
-| zkp_sampled | ✅ Working | ✅ Full | ✅ ModelCommit + ProofAnchor | Groth16 via gnark, sampled layers |
-| zkp | ✅ Working | ✅ Full | ✅ ModelCommit + ProofAnchor | Groth16 via gnark, all layers |
+| zkp_sampled | ✅ Working | ✅ Full | ✅ ModelCommit + ProofAnchor | Groth16 over server-sampled update coordinates (commit–challenge) |
+| zkp | ✅ Working | ✅ Full | ✅ ModelCommit + ProofAnchor | Groth16 over every update coordinate |
 | dp | ✅ Working | ✅ Full | ✅ ModelCommit | Gaussian noise via Opacus; runtime ε override via sentinel |
-| he_tenseal_zkp | ✅ Working | ✅ Full | ✅ ModelCommit + ProofAnchor | CKKS + Groth16 combined |
-| he_concrete_tfhe_zkp | ✅ Working | ✅ Full | ✅ ModelCommit + ProofAnchor | TFHE + Groth16 combined |
-| he_tenseal_zkp_dp | ✅ Working | ✅ Full | ✅ ModelCommit + ProofAnchor | CKKS + Groth16 + DP-SGD (triple mode) |
-| he_concrete_tfhe_zkp_dp | ✅ Working | ✅ Full | ✅ ModelCommit + ProofAnchor | TFHE + Groth16 + DP-SGD (triple mode) |
+| he_tenseal_zkp | ✅ Working | ✅ Full | ✅ ModelCommit + ProofAnchor | CKKS + Groth16; proof not bound to the ciphertext |
+| he_concrete_tfhe_zkp | ✅ Working | ✅ Full | ✅ ModelCommit + ProofAnchor | TFHE + Groth16; proof not bound to the ciphertext |
+| he_tenseal_zkp_dp | ✅ Working | ✅ Full | ✅ ModelCommit + ProofAnchor | CKKS + DP-SGD; proof not bound to the ciphertext, no update bound |
+| he_concrete_tfhe_zkp_dp | ✅ Working | ✅ Full | ✅ ModelCommit + ProofAnchor | TFHE + DP-SGD; proof not bound to the ciphertext, no update bound |
 
 ### Troubleshooting
 
@@ -371,8 +360,9 @@ python simulation.py simulation --dp --dp_params dp_params.pkl --benchmark
 | TFHE accuracy 2–3% lower | Quantization error (int8 weights) | Expected trade-off |
 | DP accuracy unchanged during `--epsilon-sweep` | `dp_epsilon` sentinel (10.0) used | Pass `--dp-epsilon` flag or use `--epsilon-sweep` |
 | DP accuracy drops significantly | ε too small (strong noise) | Increase ε when generating DP params, e.g. `python -m fl.keys generate dp --epsilon 1.0` |
-| `FileNotFoundError: secret.pkl` | HE keys not generated | `python -m fl.keys generate he_tenseal` |
-| `FileNotFoundError: dp_params.pkl` | DP params not generated | `python -m fl.keys generate dp --output dp_params.pkl` |
+| `FileNotFoundError: keys/he_tenseal/secret_context.bin` | HE keys not generated | `python -m fl.keys generate he_tenseal` |
+| `... is not a TenSEAL key file of this version` / `... is not a JSON parameter file` | key or parameter file from before pickle files were retired | regenerate it with `python -m fl.keys generate <mode>` |
+| `FileNotFoundError: dp_params.json` | DP params not generated | `python -m fl.keys generate dp --output dp_params.json` |
 | Port 8081–8084 busy | Docker port conflict | Change ports in `docker-compose.yml` |
 | Blockchain table shows all zeros | Stale ledger from pre-fix run | Re-run; parser correctly unwraps `{"ledger": [...]}` format |
 | `ledger_comparison.json` missing | `--chain-backend none` was set | Re-run without `--chain-backend none` (default is `mock`) |
@@ -407,7 +397,7 @@ All tuning is done via environment variables — no code changes required. Varia
 | `FL_ZKP_SAMPLE_SEED` | — | Integer | Fixes layer sampling for reproducible benchmarks; omit to vary across rounds |
 | `FL_ZKP_PARALLELISM` | `4` | Positive integer | Concurrent proof workers. Increase for high-core servers; diminishing returns above gnark host CPU count |
 | `FL_ZKP_SCALE` | `1000000` | Positive integer | Float→int64 scale. Too low = precision loss; too high = integer overflow |
-| `FL_ZKP_MAX_NORM` | `100.0` | Positive float | Max L2 gradient norm embedded in the proof circuit. Match to DP clipping norm when combining DP + ZKP |
+| `FL_ZKP_MAX_NORM` | calibrated | Positive float | Server's update-norm bound B on ‖w_local − w_global‖₂ (overrides the per-dataset calibration in `fl/core/update_bound.py`). Not the DP clipping norm |
 | `FL_ZKP_TIMEOUT` | `120` | Seconds | Per-call timeout for the gnark HTTP service. Increase for large models or first-run compilation |
 | `FL_ZKP_LAYERS` | `ALL` | `ALL` or CSV names | Layers to prove in full (non-sampled) ZKP mode |
 

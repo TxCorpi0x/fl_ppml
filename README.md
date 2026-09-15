@@ -42,20 +42,24 @@ Each mode addresses a distinct threat in the federated learning pipeline.
 | 1 | Baseline | `baseline` | None | — |
 | 2 | HE TenSEAL | `he_tenseal` | CKKS (TenSEAL) | Gradient confidentiality |
 | 3 | HE Concrete TFHE | `he_concrete_tfhe` | TFHE (Concrete ML) | Gradient confidentiality (bandwidth-efficient) |
-| 4 | ZKP Sampled | `zkp_sampled` | Groth16 zk-SNARK, sampled layers | Gradient integrity |
+| 4 | ZKP Sampled | `zkp_sampled` | Groth16 zk-SNARK over server-sampled coordinates (commit–challenge) | None beyond `zkp`: the server already sees plaintext. Benchmark of sampled proving cost only |
 | 5 | ZKP Full | `zkp` | Groth16 zk-SNARK, all layers | Gradient integrity — full coverage |
 | 6 | DP | `dp` | Gaussian DP-SGD (Opacus) | Membership inference |
-| 7 | HE TenSEAL + ZKP | `he_tenseal_zkp` | CKKS + Groth16 | Confidentiality + Integrity |
-| 8 | HE Concrete + ZKP | `he_concrete_tfhe_zkp` | TFHE + Groth16 | Confidentiality + Integrity (bandwidth-efficient) |
-| 9 | HE TenSEAL + ZKP + DP | `he_tenseal_zkp_dp` | CKKS + Groth16 + DP-SGD | **Full triad** |
-| 10 | HE Concrete + ZKP + DP | `he_concrete_tfhe_zkp_dp` | TFHE + Groth16 + DP-SGD | **Full triad** (bandwidth-efficient) |
+| 7 | HE TenSEAL + ZKP | `he_tenseal_zkp` | CKKS + Groth16 (unbound) | Confidentiality only — proof not bound to ciphertext |
+| 8 | HE Concrete + ZKP | `he_concrete_tfhe_zkp` | TFHE + Groth16 (unbound) | Confidentiality only — proof not bound to ciphertext |
+| 9 | HE TenSEAL + ZKP + DP | `he_tenseal_zkp_dp` | CKKS + Groth16 (unbound) + DP-SGD | Confidentiality + membership privacy; no integrity |
+| 10 | HE Concrete + ZKP + DP | `he_concrete_tfhe_zkp_dp` | TFHE + Groth16 (unbound) + DP-SGD | Confidentiality + membership privacy; no integrity |
+| 11 | HE ElGamal + ZKP | `he_elgamal_zkp` | Exponential ElGamal (BabyJubJub) + ciphertext-bound Groth16 | Confidentiality + integrity: the upload is range-checked and its update against the encrypted global model is norm-bounded |
+| 12 | HE ElGamal + sampled ZKP | `he_elgamal_zkp_sampled` | As mode 11, proving only server-sampled committed coordinates (commit–challenge, two Flower rounds per round) | Confidentiality + probabilistic integrity: m out-of-bound coordinates detected with probability 1 − C(n−m, s)/C(n, s) ([docs/ZKP.md](docs/ZKP.md#64-he_elgamal_zkp_sampled)) |
+
+> **Integrity in modes 7–10.** Their ZKP proof covers a client-chosen plaintext vector and is not bound to the ciphertext the server aggregates, so a client can prove an honest vector and upload a poisoned one (`tests/test_zkp_binding_attack.py`). Only mode 11 binds proofs to the aggregated ciphertexts. Its remaining limitations — a bounded update can still be malicious (the bound caps per-round influence, not direction), a single-party trusted setup, a shared client key, and per-chunk update norms visible to the server — are listed in `fl/privacy/he_elgamal_zkp.py`.
 
 ### Triple Modes (9 & 10)
 
 Modes 9 and 10 layer all three mechanisms at distinct pipeline stages:
 
 1. **DP-SGD** (client training) — injects calibrated Gaussian noise into gradients; provides formal ε-DP guarantee against membership inference on the published model
-2. **Groth16 ZKP** (pre-upload) — proves the noisy gradient's ℓ₂ norm is bounded; certifies client honesty to the server without revealing the gradient
+2. **Groth16 ZKP** (pre-upload) — proves a norm bound over a client-chosen plaintext vector; the proof is not bound to the uploaded ciphertext, so it certifies nothing about what is aggregated
 3. **CKKS / TFHE encryption** (upload) — encrypts the noisy, norm-bounded gradient in transit; protects against a curious aggregation server
 
 Each mechanism is independent; their composition is safe and additive in overhead.
@@ -94,43 +98,61 @@ pip install -r requirements.txt
 ```
 
 ### One-Time Key and Parameter Generation
-python compare.py --dataset healthcare --simulation --dp --dp_params keys/dp/dp_params.pkl --benchmark
+python compare.py --dataset healthcare --simulation --dp --dp_params keys/dp/dp_params.json --benchmark
 Use the unified key/params CLI implemented in `fl.keys` instead of the removed top-level helper scripts.
 
 ```bash
 cd fl_ppml
 
 # HE keys — TenSEAL CKKS context (example)
-# creates keys/he_tenseal/{secret_key.pkl,public_key.pkl}
+# creates keys/he_tenseal/{secret_context.bin,public_context.bin}
 
 The helper script wraps the current compare runner; if you need to change container ports or datasets, inspect [scripts/run_docker_compare.sh](scripts/run_docker_compare.sh).
 # DP parameters — default ε=1.0, δ=1e-5 (example)
-# creates keys/dp/dp_params.pkl
-python -m fl.keys generate dp --output keys/dp/dp_params.pkl --epsilon 1.0 --delta 1e-5
+# creates keys/dp/dp_params.json
+python -m fl.keys generate dp --output keys/dp/dp_params.json --epsilon 1.0 --delta 1e-5
 
 # ZKP params (example)
-python -m fl.keys generate zkp --output keys/zkp/zkp_params.pkl
+python -m fl.keys generate zkp --output keys/zkp/zkp_params.json
 ```
 
 ### gnark ZKP Service (required for ZKP modes)
 
-Build and run the gnark-based ZKP HTTP service used by ZKP modes. The repository expects the binary name `gnark_service`.
+ZKP modes use a Go Groth16 service, split into two roles: clients prove against a **prover**, and the server verifies against a separate **verifier** that holds only verifying keys. Neither role runs setup. Both load pinned keys and refuse to start if the keys are missing or don't match the manifest (see [docs/ZKP.md, section 7](docs/ZKP.md#7-keys-and-trusted-setup)).
 
 ```bash
-cd zkp_gnark_service
-go build -o gnark_service main.go
-./gnark_service &    # listens on :9000 by default (or set ZKP_SERVICE_PORT)
-cd ..
+cd zkp_gnark_service && go build -o gnark_service . && cd ..
 ```
+
+The verifying keys and `manifest.json` are committed in `zkp_gnark_service/keys/`. Proving keys (hundreds of MB) are not committed; they live in a local cache. On a fresh checkout they must be regenerated. That run also re-pins the verifying keys, so commit the new `keys/` directory:
+
+```bash
+zkp_gnark_service/gnark_service setup --keys-dir zkp_gnark_service/keys --pk-dir ~/.cache/fl_ppml/gnark_pk --force
+```
+
+`compare.py` starts both roles itself. To run them by hand:
+
+```bash
+zkp_gnark_service/gnark_service serve --role prover --keys-dir zkp_gnark_service/keys --pk-dir ~/.cache/fl_ppml/gnark_pk --port 9000 &
+zkp_gnark_service/gnark_service serve --role verifier --keys-dir zkp_gnark_service/keys --port 9001 &
+```
+
+Every proof carries the SHA-256 of the verifying key it was made under. The server rejects any proof whose key isn't the pinned one, and each `round_outcomes` entry records the manifest hash. The setup is **single-party**: whoever ran `setup` could forge proofs. See [docs/ZKP.md, section 7.3](docs/ZKP.md#73-what-a-single-party-setup-does-and-does-not-give) for what a multi-party ceremony would change.
 
 ---
 
 ## Quick Start
 
-### All 10 modes (recommended)
+### Default modes
 
 ```bash
 python compare.py --dataset healthcare
+```
+
+The default set is modes 1–10. The ElGamal modes are slower and opt-in:
+
+```bash
+python compare.py --dataset healthcare --modes he_elgamal_zkp,he_elgamal_zkp_sampled
 ```
 
 ### Select specific modes
@@ -153,7 +175,7 @@ python compare.py --dataset cifar --dirichlet-alpha 0.5 --simulation
 ```bash
 python simulation.py simulation --rounds 2 --number_clients 2 --max_epochs 1 --benchmark
 python simulation.py simulation --he --rounds 2 --benchmark
-python simulation.py simulation --dp --dp_params dp_params.pkl --benchmark
+python simulation.py simulation --dp --dp_params dp_params.json --benchmark
 ```
 
 ### Docker (original 4 modes)
@@ -178,7 +200,7 @@ python compare.py --dataset healthcare --simulation --epsilon-sweep
 
 Output: `results/healthcare/dp_eps_<ε>/<timestamp>/benchmark_dp.json` per value, plus `dp_epsilon_sweep_summary.json`.
 
-The noise multiplier is derived as σ = √(2 · ln(1.25 / δ)) / ε. The sentinel value `dp_epsilon=10.0` means "load ε from `dp_params.pkl`"; use `--dp-epsilon` or `--epsilon-sweep` to override at runtime.
+The noise multiplier is derived as σ = √(2 · ln(1.25 / δ)) / ε. The sentinel value `dp_epsilon=10.0` means "load ε from `dp_params.json`"; use `--dp-epsilon` or `--epsilon-sweep` to override at runtime.
 
 ### Alpha Sweep — Non-IID Heterogeneity
 
@@ -415,28 +437,18 @@ This checkout includes the guides index at [docs/README.md](docs/README.md) plus
 
 ## Performance Reference
 
-Measured on Apple Silicon (M-series), healthcare dataset, 3 clients, 3 rounds.
+The stored results under `results/` were produced before the current ZKP protocols, key handling and fail-closed checks, so their timings and bandwidth figures describe older code and are not reproduced here. They will be regenerated with the current code.
 
-| Mode | Accuracy | Upload/round | Total Time | Enc+Dec | Proof Gen |
-|------|----------|--------------|-----------|---------|----------|
-| `baseline` | ~87.3% | 0.01 MB | ~45s (1×) | 0s | 0s |
-| `he_tenseal` | ~87.1% | 244.7 MB | ~148s (3.3×) | ~1.5s | 0s |
-| `he_concrete_tfhe` | ~84.8% | 17.8 MB | ~310s (6.9×) | ~5.3s | 0s |
-| `zkp_sampled` | ~87.2% | 0.01 MB | ~520s (11.6×) | 0s | ~22.4s |
-| `zkp` | ~87.2% | 0.01 MB | ~1200s | 0s | ~52s |
-| `dp` (ε=1.0) | ~83.1% | 0.01 MB | ~48s (1.1×) | <0.1s | 0s |
-| `he_tenseal_zkp` | ~87.0% | 244.7 MB | ~670s (14.9×) | ~1.8s | ~22.4s |
-| `he_concrete_tfhe_zkp` | ~84.7% | 17.8 MB | ~480s (10.7×) | ~5.3s | ~22.4s |
-| `he_tenseal_zkp_dp` | ~82.8% | 244.7 MB | ~675s | ~1.8s | ~22.4s |
-| `he_concrete_tfhe_zkp_dp` | ~82.3% | 17.8 MB | ~485s | ~5.3s | ~22.4s |
+Current single-proof measurements (Apple M3 Pro, 18 GB):
 
-**Bandwidth**: CKKS ciphertext expansion is ~24,000× over plaintext (0.01 MB → 244.7 MB per round). TFHE uses quantized int8 weights — 14× less bandwidth than CKKS.
+| Circuit | Constraints | Prove | Verify |
+|---|---|---|---|
+| Norm (`zkp`, CKKS/TFHE composites), 256 values per proof | 103,365 | 0.65 s | 2.3–3.6 ms |
+| ElGamal (`he_elgamal_zkp`), 128 coordinates per proof | 1,274,949 | 3.13 s | 7.4 ms |
 
-**Latency**: ZKP Groth16 proof generation dominates timing in all ZKP-containing modes (~22s per client per round). Verification is cheap (~0.08s).
+See [docs/ZKP.md, section 11](docs/ZKP.md#11-performance) for proofs per round, key sizes and end-to-end timings.
 
-**Accuracy**: HE modes preserve accuracy (exact arithmetic). DP and TFHE modes trade accuracy for their guarantees — the loss is additive in triple modes.
-
-**DP**: The only mode providing a formal information-theoretic (ε-DP) guarantee against membership inference on the published model. HE and ZKP rest on computational hardness assumptions.
+**DP**: The only mode providing a formal (ε, δ)-DP guarantee against membership inference on the published model. HE and ZKP rest on computational hardness assumptions.
 
 ---
 
@@ -448,21 +460,37 @@ All tuning is via environment variables — no code changes required. Variables 
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `FL_ZKP_BACKEND` | `gnark` | `gnark` = Groth16 zk-SNARK; `pedersen` = legacy commitment (no soundness) |
-| `FL_ZKP_SELECT_BY` | `size` | `size` = largest layers; `random` = rotate across rounds |
-| `FL_ZKP_NUM_LAYERS` | `1` | Layers proven per client per round |
-| `FL_ZKP_SAMPLE_PCT` | — | Fraction of layers to prove (alternative to `FL_ZKP_NUM_LAYERS`) |
-| `FL_ZKP_SAMPLE_SEED` | — | Seed for reproducible layer sampling |
-| `FL_ZKP_PARALLELISM` | `4` | Concurrent proof workers |
+| `FL_ZKP_BACKEND` | `gnark` | `gnark` = Groth16 zk-SNARK; `pedersen` = legacy commitment stub (no verification), refused unless `FL_ZKP_ALLOW_PEDERSEN_STUB=1` |
+| `FL_ZKP_ALLOW_PEDERSEN_STUB` | `0` | `1` = knowingly run the unverified pedersen stub; every round is recorded as `unverified_stub` |
+| `FL_ZKP_SAMPLE_PCT` | `0.1` | Sampled modes: fraction of model coordinates proven per client per round, in (0, 1]. Set on the server; the per-round seed is drawn by the server after clients commit and recorded in `round_outcomes` |
+| `FL_ZKP_PARALLELISM` | `1` | Proofs generated concurrently per client (each proof uses several cores inside the prover service) |
 | `FL_ZKP_SCALE` | `1000000` | Float→int64 scale for the proof circuit |
-| `FL_ZKP_MAX_NORM` | `100.0` | Max ℓ₂ gradient norm in circuit; match to DP clipping norm when combining |
-| `FL_ZKP_TIMEOUT` | `120` | Per-call timeout (seconds) for the gnark HTTP service |
+| `FL_ZKP_MAX_NORM` | calibrated per dataset | Overrides the server's **update**-norm bound B on ‖w_local − w_global‖₂ (not a weight norm). Default: `PER_STEP_UPDATE_NORM[dataset] × local_epochs × max_client_batches` in `fl/core/update_bound.py` (the server computes the batch count from the same partition clients use), calibrated with `scripts/calibrate_update_norm.py`. Clients clip their update to B before proving. DP runs need their own calibration (DP noise enlarges honest updates); the DP clipping norm is a per-step gradient clip and is not a valid value |
+| `FL_ZKP_TIMEOUT` | `600` | Fallback HTTP timeout (seconds) for the proof services; `FL_ZKP_PROVE_TIMEOUT` (default 1800) and `FL_ZKP_VERIFY_TIMEOUT` / `FL_ZKP_VERIFY_LIGHT_TIMEOUT` (default 900) take precedence |
+
+**Failure handling.** Security-relevant paths fail closed:
+
+- A client whose proof generation fails raises instead of uploading.
+- The server checks every upload against its own model schema and proof policy: full coverage, shapes, scale and bound. Clients that fail are rejected; the round aborts if the proof service is unreachable.
+- If fewer clients are admitted than `min_fit_clients`, the global model is unchanged and nothing is written to the ledger.
+- Every round's outcome (`aggregated`, `no_quorum`, `infrastructure_abort`), including rejected clients and reasons, is recorded under `round_outcomes` in `comparison_report.json`. ZKP runs with any non-aggregated round fail validation.
+- Sampled modes (`zkp_sampled`, `he_elgamal_zkp_sampled`) use two Flower rounds per round (commit, then challenge). A client that commits but doesn't answer the challenge, or answers without having committed, is rejected.
+- DP without a params file refuses to run unless `--dp_epsilon` is passed explicitly.
 
 ### HE
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `FL_ENCRYPT_LAYERS` | `model.0.weight,model.0.bias` | Layers to encrypt. `ALL` = full gradient privacy |
+| `FL_ENCRYPT_LAYERS` | `ALL` | TenSEAL layers to encrypt; unlisted layers are sent in plaintext. Names not in the model are an error |
+| `FL_CONCRETE_TFHE_FORCE_REAL` | `0` | `1` = run real TFHE on image datasets (high RAM) |
+| `FL_CONCRETE_TFHE_ALLOW_SIMULATED` | `0` | `1` = knowingly send plaintext quantized weights on image datasets; otherwise TFHE on images refuses to run |
+| `FL_ELGAMAL_SCALE` | `10000` | `he_elgamal_zkp` quantization: q = round(w·scale), \|q\| < 2¹⁷ (so \|w\| < 13.1). The proven bound is W²·⌈B·scale + √n/2⌉²; the √n/2 rounding slack is small only when B·scale ≫ √n, which is why the default rose from 1000 |
+| `FL_CLIENT_WAIT_TIMEOUT` | `600` | Seconds the server waits for `min_avail_clients` before a round; if they don't arrive it stops the run with an error instead of Flower's 24-hour wait |
+| `FL_SERVER_GRACE` | `600` | Harness: seconds a server may keep running after every client exited (60 s if any client failed) before it is terminated and the mode marked failed |
+| `FL_ZKP_PROVER_URL` | `http://127.0.0.1:9000` | gnark prover role (clients) |
+| `FL_ZKP_VERIFIER_URL` | `http://127.0.0.1:9001` | gnark verifier role (server) |
+| `FL_ZKP_KEYS_DIR` | `zkp_gnark_service/keys` | Pinned manifest and verifying keys. The circuit sizes (norm chunk, ElGamal coordinates per proof) come from this manifest |
+| `FL_ZKP_PK_DIR` | `~/.cache/fl_ppml/gnark_pk` | Proving-key cache (prover only) |
 | `FL_CONCRETE_TFHE_BIT_WIDTH` | `14` | TFHE quantization bit width (2–16). Lower = more accuracy loss |
 | `FL_CONCRETE_TFHE_ADAPTIVE_QUANT` | `0` | `1` = per-layer quantization scale fitting (~0.5–1% accuracy recovery) |
 
@@ -481,14 +509,16 @@ All tuning is via environment variables — no code changes required. Variables 
 
 | Issue | Cause | Fix |
 |-------|-------|-----|
-| ZKP modes: `Connection refused :9000` | gnark service not running | `cd zkp_gnark_service && ./gnark_service` |
+| ZKP modes: `Connection refused :9000`/`:9001` | gnark prover/verifier not running | see "gnark ZKP Service" above; `compare.py` starts both |
+| `No pinned ZKP key manifest` / `Proving keys … not in` | keys never generated on this machine | run `gnark_service setup` (above) |
+| `HTTP 503 … verifying key` | service started from different keys than the manifest | restart the services from `zkp_gnark_service/keys` |
 | `proof_verification = 0.0` in results | Pedersen backend selected | `export FL_ZKP_BACKEND=gnark` |
 | TenSEAL `scale out of bounds` | CKKS coefficient overflow | Already fixed; ensure `global_scale=2^40` |
 | TFHE accuracy 2–3% lower | int8 quantization error | Expected trade-off |
 | DP accuracy unchanged during `--epsilon-sweep` | Sentinel `dp_epsilon=10.0` used | Pass `--dp-epsilon` or use `--epsilon-sweep` |
 | DP accuracy drops significantly | ε too small (strong noise) | Increase ε when generating DP params, e.g. `python -m fl.keys generate dp --epsilon 1.0` |
-| `FileNotFoundError: keys/he_tenseal/secret_key.pkl` | HE keys not generated | `python -m fl.keys generate he_tenseal` |
-| `FileNotFoundError: keys/dp/dp_params.pkl` | DP params not generated | `python -m fl.keys generate dp --output keys/dp/dp_params.pkl` |
+| `FileNotFoundError: keys/he_tenseal/secret_context.bin` | HE keys not generated | `python -m fl.keys generate he_tenseal` |
+| `FileNotFoundError: keys/dp/dp_params.json` | DP params not generated | `python -m fl.keys generate dp --output keys/dp/dp_params.json` |
 | Port 8081–8084 busy | Docker port conflict | Change ports in `docker-compose.yml` |
 | Blockchain table shows all zeros | Stale ledger from pre-fix run | Re-run; parser unwraps `{"ledger": [...]}` format correctly |
 | `ledger_comparison.json` missing | `--chain-backend none` was set | Re-run without `--chain-backend none` |

@@ -849,7 +849,7 @@ aggregate_fit()
          (only when privacy_mode._last_anchor_data is populated)
 ```
 
-ZKP-containing modes (`zkp`, `zkp_sampled`, `he_tenseal_zkp`, `he_concrete_tfhe_zkp`) set `_last_anchor_data` inside their `aggregate_fit_override()`. Non-ZKP modes never set it, so `anchor_proofs` is never called — this is the source of the 3 vs 6 event counts seen in the audit table.
+ZKP modes set `_last_anchor_data` inside `aggregate_fit_override()` when a round aggregates. Non-ZKP modes never set it, so `anchor_proofs` is never called; that is why ZKP modes record twice as many events. A round that does not update the model (no quorum, or an aborted round) writes neither event.
 
 ---
 

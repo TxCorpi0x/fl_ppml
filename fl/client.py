@@ -413,7 +413,8 @@ def make_client(
 
     # Load existing checkpoint if present
     if os.path.exists(config.model_save):
-        checkpoint = torch.load(config.model_save, map_location=device)
+        # weights_only: a checkpoint is tensors, never arbitrary pickled objects.
+        checkpoint = torch.load(config.model_save, map_location=device, weights_only=True)
         net.load_state_dict(checkpoint.get("model_state_dict", checkpoint))
         print(f"[Client {cid}] Loaded checkpoint from {config.model_save}")
 

@@ -69,8 +69,10 @@ def print_summary(results: List[Dict[str, Any]]) -> None:
 
     for r in results:
         mode = r.get("mode", "?")
-        status = "[OK] OK" if r.get("success") else "[FAIL] FAIL"
         bm = r.get("benchmark") or {}
+        status = "[OK] OK" if r.get("success") else "[FAIL] FAIL"
+        if r.get("success") and bm.get("transport") == "simulated" and "he" in mode:
+            status = "[SIM] OK"  # plaintext transport: not evidence about encryption
         timing = bm.get("timing", {})
         model_quality = bm.get("model_quality", {})
         rounds = int(bm.get("rounds", 10))

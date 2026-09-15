@@ -92,8 +92,17 @@ def run_mode(
     mode = get_privacy_mode(mode_name)
 
     # ── Benchmark ─────────────────────────────────────────────────────────────
+    if "he" in mode_name:
+        print(
+            "[WARN] In-process simulation: HE modes measure encryption cost but transport "
+            "plaintext. Use the distributed runner for results about encrypted transport."
+        )
     benchmark = init_benchmark(
-        mode=mode_name, num_clients=config.num_clients, rounds=config.num_rounds
+        mode=mode_name,
+        num_clients=config.num_clients,
+        rounds=config.num_rounds,
+        transport="simulated",
+        zkp_backend=config.zkp_backend if "zkp" in mode_name else None,
     )
 
     # ── Strategy (server) ─────────────────────────────────────────────────────

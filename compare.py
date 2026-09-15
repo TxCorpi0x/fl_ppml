@@ -113,7 +113,10 @@ def _build_parser() -> argparse.ArgumentParser:
     p.add_argument(
         "--simulation",
         action="store_true",
-        help="Use Flower in-process simulation instead of real gRPC server + clients.",
+        help=(
+            "Use Flower in-process simulation instead of real gRPC server + clients. "
+            "HE modes then transport plaintext (their results are marked [SIM])."
+        ),
     )
     p.add_argument(
         "--chain-backend",

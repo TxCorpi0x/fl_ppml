@@ -98,22 +98,22 @@ pip install -r requirements.txt
 ```
 
 ### One-Time Key and Parameter Generation
-python compare.py --dataset healthcare --simulation --dp --dp_params keys/dp/dp_params.pkl --benchmark
+python compare.py --dataset healthcare --simulation --dp --dp_params keys/dp/dp_params.json --benchmark
 Use the unified key/params CLI implemented in `fl.keys` instead of the removed top-level helper scripts.
 
 ```bash
 cd fl_ppml
 
 # HE keys — TenSEAL CKKS context (example)
-# creates keys/he_tenseal/{secret_key.pkl,public_key.pkl}
+# creates keys/he_tenseal/{secret_context.bin,public_context.bin}
 
 The helper script wraps the current compare runner; if you need to change container ports or datasets, inspect [scripts/run_docker_compare.sh](scripts/run_docker_compare.sh).
 # DP parameters — default ε=1.0, δ=1e-5 (example)
-# creates keys/dp/dp_params.pkl
-python -m fl.keys generate dp --output keys/dp/dp_params.pkl --epsilon 1.0 --delta 1e-5
+# creates keys/dp/dp_params.json
+python -m fl.keys generate dp --output keys/dp/dp_params.json --epsilon 1.0 --delta 1e-5
 
 # ZKP params (example)
-python -m fl.keys generate zkp --output keys/zkp/zkp_params.pkl
+python -m fl.keys generate zkp --output keys/zkp/zkp_params.json
 ```
 
 ### gnark ZKP Service (required for ZKP modes)
@@ -169,7 +169,7 @@ python compare.py --dataset cifar --dirichlet-alpha 0.5 --simulation
 ```bash
 python simulation.py simulation --rounds 2 --number_clients 2 --max_epochs 1 --benchmark
 python simulation.py simulation --he --rounds 2 --benchmark
-python simulation.py simulation --dp --dp_params dp_params.pkl --benchmark
+python simulation.py simulation --dp --dp_params dp_params.json --benchmark
 ```
 
 ### Docker (original 4 modes)
@@ -194,7 +194,7 @@ python compare.py --dataset healthcare --simulation --epsilon-sweep
 
 Output: `results/healthcare/dp_eps_<ε>/<timestamp>/benchmark_dp.json` per value, plus `dp_epsilon_sweep_summary.json`.
 
-The noise multiplier is derived as σ = √(2 · ln(1.25 / δ)) / ε. The sentinel value `dp_epsilon=10.0` means "load ε from `dp_params.pkl`"; use `--dp-epsilon` or `--epsilon-sweep` to override at runtime.
+The noise multiplier is derived as σ = √(2 · ln(1.25 / δ)) / ε. The sentinel value `dp_epsilon=10.0` means "load ε from `dp_params.json`"; use `--dp-epsilon` or `--epsilon-sweep` to override at runtime.
 
 ### Alpha Sweep — Non-IID Heterogeneity
 
@@ -467,10 +467,10 @@ All tuning is via environment variables — no code changes required. Variables 
 | `FL_ZKP_BACKEND` | `gnark` | `gnark` = Groth16 zk-SNARK; `pedersen` = legacy commitment stub (no verification), refused unless `FL_ZKP_ALLOW_PEDERSEN_STUB=1` |
 | `FL_ZKP_ALLOW_PEDERSEN_STUB` | `0` | `1` = knowingly run the unverified pedersen stub; every round is recorded as `unverified_stub` |
 | `FL_ZKP_SAMPLE_PCT` | `0.1` | Sampled modes: fraction of model coordinates proven per client per round, in (0, 1]. Set on the server; the per-round seed is drawn by the server after clients commit and recorded in `round_outcomes` |
-| `FL_ZKP_PARALLELISM` | `4` | Concurrent proof workers |
+| `FL_ZKP_PARALLELISM` | `1` | Proofs generated concurrently per client (each proof uses several cores inside the prover service) |
 | `FL_ZKP_SCALE` | `1000000` | Float→int64 scale for the proof circuit |
 | `FL_ZKP_MAX_NORM` | calibrated per dataset | Overrides the server's **update**-norm bound B on ‖w_local − w_global‖₂ (not a weight norm). Default: `PER_STEP_UPDATE_NORM[dataset] × local_epochs × max_client_batches` in `fl/core/update_bound.py` (the server computes the batch count from the same partition clients use), calibrated with `scripts/calibrate_update_norm.py`. Clients clip their update to B before proving. DP runs need their own calibration (DP noise enlarges honest updates); the DP clipping norm is a per-step gradient clip and is not a valid value |
-| `FL_ZKP_TIMEOUT` | `120` | Per-call timeout (seconds) for the gnark HTTP service |
+| `FL_ZKP_TIMEOUT` | `600` | Fallback HTTP timeout (seconds) for the proof services; `FL_ZKP_PROVE_TIMEOUT` (default 1800) and `FL_ZKP_VERIFY_TIMEOUT` / `FL_ZKP_VERIFY_LIGHT_TIMEOUT` (default 900) take precedence |
 
 **Failure handling.** Security-relevant paths fail closed (`audit/failmodes.md`):
 
@@ -521,8 +521,8 @@ All tuning is via environment variables — no code changes required. Variables 
 | TFHE accuracy 2–3% lower | int8 quantization error | Expected trade-off |
 | DP accuracy unchanged during `--epsilon-sweep` | Sentinel `dp_epsilon=10.0` used | Pass `--dp-epsilon` or use `--epsilon-sweep` |
 | DP accuracy drops significantly | ε too small (strong noise) | Increase ε when generating DP params, e.g. `python -m fl.keys generate dp --epsilon 1.0` |
-| `FileNotFoundError: keys/he_tenseal/secret_key.pkl` | HE keys not generated | `python -m fl.keys generate he_tenseal` |
-| `FileNotFoundError: keys/dp/dp_params.pkl` | DP params not generated | `python -m fl.keys generate dp --output keys/dp/dp_params.pkl` |
+| `FileNotFoundError: keys/he_tenseal/secret_context.bin` | HE keys not generated | `python -m fl.keys generate he_tenseal` |
+| `FileNotFoundError: keys/dp/dp_params.json` | DP params not generated | `python -m fl.keys generate dp --output keys/dp/dp_params.json` |
 | Port 8081–8084 busy | Docker port conflict | Change ports in `docker-compose.yml` |
 | Blockchain table shows all zeros | Stale ledger from pre-fix run | Re-run; parser unwraps `{"ledger": [...]}` format correctly |
 | `ledger_comparison.json` missing | `--chain-backend none` was set | Re-run without `--chain-backend none` |

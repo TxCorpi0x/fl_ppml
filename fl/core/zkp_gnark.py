@@ -392,8 +392,8 @@ def generate_gnark_proofs(
                 raise MemoryError(
                     "ZKP memory guard triggered: RSS "
                     f"{rss_now:.1f}MB exceeds limit={rss_limit_mb:.1f}MB. "
-                    "Reduce protected layers (e.g. FL_ZKP_NUM_LAYERS=1), "
-                    "set FL_ZKP_PARALLELISM=1, or use zkp_sampled for image datasets."
+                    "Set FL_ZKP_PARALLELISM=1, raise FL_ZKP_MAX_RSS_MB if the machine has headroom, "
+                    "or use a sampled mode for large models."
                 )
 
             # Optional tiny pause to let allocator/GC settle in constrained environments.

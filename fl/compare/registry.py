@@ -133,9 +133,9 @@ class ModeConfig:
                 return None  # gnark doesn't need a pre-generated params file
         if not os.path.exists(self.requires_key):
             cmd_hint = {
-                "keys/he_tenseal/secret_key.pkl": "python -m fl.keys generate he_tenseal",
-                "keys/zkp/zkp_params.pkl": "python -m fl.keys generate zkp",
-                "keys/dp/dp_params.pkl": "python -m fl.keys generate dp",
+                "keys/he_tenseal/secret_context.bin": "python -m fl.keys generate he_tenseal",
+                "keys/zkp/zkp_params.json": "python -m fl.keys generate zkp",
+                "keys/dp/dp_params.json": "python -m fl.keys generate dp",
             }.get(self.requires_key, f"python -m fl.keys generate <type>")
             return f"Missing prerequisite: {self.requires_key}\n" f"  Run: {cmd_hint}"
         return None
@@ -155,7 +155,7 @@ MODES: Dict[str, ModeConfig] = {
         he_backend="tenseal",
         color="#e74c3c",
         timeout_s=3600,
-        requires_key="keys/he_tenseal/secret_key.pkl",
+        requires_key="keys/he_tenseal/secret_context.bin",
         display_name="HE-TenSEAL",
     ),
     # Legacy HE-Concrete mode removed; use he_concrete_tfhe instead.
@@ -172,7 +172,7 @@ MODES: Dict[str, ModeConfig] = {
         he_backend=None,
         color="#3498db",
         timeout_s=3600,
-        requires_key="keys/zkp/zkp_params.pkl",
+        requires_key="keys/zkp/zkp_params.json",
         display_name="ZKP",
     ),
     "zkp_sampled": ModeConfig(
@@ -180,7 +180,7 @@ MODES: Dict[str, ModeConfig] = {
         he_backend=None,
         color="#2c7fb8",
         timeout_s=3600,
-        requires_key="keys/zkp/zkp_params.pkl",
+        requires_key="keys/zkp/zkp_params.json",
         display_name="ZKP (sampled)",
     ),
     "dp": ModeConfig(
@@ -188,7 +188,7 @@ MODES: Dict[str, ModeConfig] = {
         he_backend=None,
         color="#f39c12",
         timeout_s=600,
-        requires_key="keys/dp/dp_params.pkl",
+        requires_key="keys/dp/dp_params.json",
         display_name="DP",
     ),
     # ── Hybrid FHE + ZKP modes ─────────────────────────────────────────────
@@ -200,7 +200,7 @@ MODES: Dict[str, ModeConfig] = {
         he_backend="tenseal",
         color="#c0392b",
         timeout_s=7200,
-        requires_key="keys/he_tenseal/secret_key.pkl",
+        requires_key="keys/he_tenseal/secret_context.bin",
         display_name="HE-TenSEAL + ZKP (unbound)",
     ),
     "he_concrete_tfhe_zkp": ModeConfig(
@@ -239,7 +239,7 @@ MODES: Dict[str, ModeConfig] = {
         he_backend="tenseal",
         color="#922b21",
         timeout_s=7200,
-        requires_key="keys/he_tenseal/secret_key.pkl",
+        requires_key="keys/he_tenseal/secret_context.bin",
         display_name="HE-TenSEAL + ZKP (unbound) + DP",
     ),
     "he_concrete_tfhe_zkp_dp": ModeConfig(

@@ -3,26 +3,26 @@
   "curve": "BN254",
   "backend": "groth16",
   "gnark_version": "0.10.0-alpha",
-  "created_at": "2026-09-15T07:33:10Z",
+  "created_at": "2026-09-15T12:37:08Z",
   "setup": "single-party: one run of groth16.Setup by the operator of `gnark_service setup`. The setup randomness existed in that process's memory and is not recoverable from these files, but nothing proves it was destroyed. See audit/setup.md.",
   "circuits": [
     {
       "circuit": "norm",
       "n": 256,
-      "constraints": 86725,
+      "constraints": 103365,
       "vk_file": "norm-256.vk",
-      "vk_sha256": "c871685d1a5fb2c9a12d3ef496c14991adf6cee715f364146bcea5731e2c7b8d",
+      "vk_sha256": "0f5c58b34e1ab726157d205443eae488d931a22271fed7943a2b9f273ac816bb",
       "pk_file": "norm-256.pk",
-      "pk_sha256": "454fe5d10752b308a555dec13cd6f6321473f615eec3d9e3b21d62663299c73d"
+      "pk_sha256": "7bc808fc6cf2c346d95d3c864efc8da4d381bb9e372f98af888009f78260a6cf"
     },
     {
       "circuit": "elgamal",
       "n": 128,
       "constraints": 1274949,
       "vk_file": "elgamal-128.vk",
-      "vk_sha256": "5866d481a9a4ecb3ff67c9ec92064b4b8accb36b5b69bc416e398311e9de2037",
+      "vk_sha256": "9dba2b872d64b195cbb90cd5281b952ecd2db96680714c9af0ea5801993d83c0",
       "pk_file": "elgamal-128.pk",
-      "pk_sha256": "db45b25cdf1609bfd700efc90586b6303c22dbb72178bba508c55804440914a5"
+      "pk_sha256": "e7e39cf3280b5d4166b929cd6d170a0de2a2ca04d381f0edea413b181590a1e1"
     }
   ]
 }

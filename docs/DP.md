@@ -589,13 +589,13 @@ For thesis or paper reporting, the epsilon sweep generates Figure 1 of any empir
 
 ### 14.1 Problem: Key File Coupling
 
-The standard approach to configuring DP in this framework is to pre-generate a `dp_params.pkl` file using the unified CLI (`python -m fl.keys generate dp`). This file stores:
+The standard approach to configuring DP in this framework is to pre-generate a `dp_params.json` file using the unified CLI (`python -m fl.keys generate dp`). This file stores:
 - $\varepsilon$ (the target privacy budget)
 - $\delta$ (the failure probability)
 - `max_grad_norm` $C$ (the gradient clipping threshold)
 - `noise_multiplier` $\sigma$ (derived from $\varepsilon$, $\delta$, $n$, $B$, $T$)
 
-This pre-generation step makes sense for production deployments where generating cryptographic parameters is expensive. However, for sweep experiments, generating a new `dp_params.pkl` file for each of the 6 sweep points is operationally cumbersome: it would require 6 separate `python -m fl.keys generate dp` invocations, 6 separate key files, and a mechanism to pass the correct file for each sweep point.
+This pre-generation step makes sense for production deployments where generating cryptographic parameters is expensive. However, for sweep experiments, generating a new `dp_params.json` file for each of the 6 sweep points is operationally cumbersome: it would require 6 separate `python -m fl.keys generate dp` invocations, 6 separate key files, and a mechanism to pass the correct file for each sweep point.
 
 ### 14.2 The Sentinel Pattern
 
@@ -610,7 +610,7 @@ The sentinel value `FLConfig.dp_epsilon = 10.0` means "use whatever $\varepsilon
 
 ```
 FLConfig.dp_epsilon
-    == 10.0  →  sentinel: load σ from dp_params.pkl as stored
+    == 10.0  →  sentinel: load σ from dp_params.json as stored
     != 10.0  →  override: recompute σ = sqrt(2·ln(1.25/δ)) / dp_epsilon
 ```
 
@@ -623,7 +623,7 @@ if config.dp_epsilon != 10.0:                    # sentinel check
     params.noise_multiplier = math.sqrt(2 * math.log(1.25 / params.delta)) / params.epsilon
 ```
 
-The `dp_params.pkl` file on disk is **not modified**. The override exists only in memory for the duration of the process. Re-running the same pkl with the sentinel value 10.0 uses the original key file $\varepsilon$ again.
+The `dp_params.json` file on disk is **not modified**. The override exists only in memory for the duration of the process. Re-running the same pkl with the sentinel value 10.0 uses the original key file $\varepsilon$ again.
 
 ### 14.3 Forwarding Through Subprocess Chains
 
@@ -642,7 +642,7 @@ When `run_distributed()` builds the subprocess command strings, it iterates over
 ### 14.4 Thread Safety and Isolation
 
 Because each subprocess runs in its own process address space, there is no shared state between sweep experiments. Each process independently:
-1. Loads `dp_params.pkl` from disk (read-only)
+1. Loads `dp_params.json` from disk (read-only)
 2. Applies the override in memory
 3. Runs its training with the overridden $\sigma$
 4. Writes its results to a timestamped output directory
@@ -821,19 +821,19 @@ DP adds **calibrated noise** to model parameters/gradients such that:
 
 ```bash
 ## Default configuration (ε=1.0, δ=1e-5)
-python -m fl.keys generate dp --output dp_params.pkl
+python -m fl.keys generate dp --output dp_params.json
 
 ## Custom privacy budget
-python -m fl.keys generate dp --output dp_params.pkl --epsilon 0.5 --delta 1e-5 --max_grad_norm 1.0
+python -m fl.keys generate dp --output dp_params.json --epsilon 0.5 --delta 1e-5 --max_grad_norm 1.0
 
 ## Very strong privacy
-python -m fl.keys generate dp --output dp_params.pkl --epsilon 0.1 --delta 1e-6 --max_grad_norm 0.5
+python -m fl.keys generate dp --output dp_params.json --epsilon 0.1 --delta 1e-6 --max_grad_norm 0.5
 
 ## Weak privacy (compliance only)
-python -m fl.keys generate dp --output dp_params.pkl --epsilon 5.0 --delta 1e-5 --max_grad_norm 2.0
+python -m fl.keys generate dp --output dp_params.json --epsilon 5.0 --delta 1e-5 --max_grad_norm 2.0
 ```
 
-This creates `dp_params.pkl` with your DP configuration.
+This creates `dp_params.json` with your DP configuration.
 
 #### Step 2: Run DP Mode
 
@@ -841,7 +841,7 @@ This creates `dp_params.pkl` with your DP configuration.
 ```bash
 python simulation.py simulation \
     --dp \
-    --dp_params dp_params.pkl \
+    --dp_params dp_params.json \
     --benchmark \
     --rounds 5 \
     --number_clients 4 \
@@ -866,7 +866,7 @@ python main_server.py server \
 ## Client 0
 python main_client.py client \
     --dp \
-    --dp_params dp_params.pkl \
+    --dp_params dp_params.json \
     --id_client 0 \
     --max_epochs 1 \
     --save_results ./results/dp_client0/
@@ -874,7 +874,7 @@ python main_client.py client \
 ## Client 1
 python main_client.py client \
     --dp \
-    --dp_params dp_params.pkl \
+    --dp_params dp_params.json \
     --id_client 1 \
     --max_epochs 1 \
     --save_results ./results/dp_client1/
@@ -1012,7 +1012,7 @@ The benchmark system tracks DP-specific metrics:
 
 **High Privacy (Medical/Financial):**
 ```bash
-python -m fl.keys generate dp --output dp_params.pkl \
+python -m fl.keys generate dp --output dp_params.json \
     --epsilon 0.5 \
     --delta 1e-6 \
     --max_grad_norm 0.5
@@ -1020,7 +1020,7 @@ python -m fl.keys generate dp --output dp_params.pkl \
 
 **Standard Privacy (Personal Data):**
 ```bash
-python -m fl.keys generate dp --output dp_params.pkl \
+python -m fl.keys generate dp --output dp_params.json \
     --epsilon 1.0 \
     --delta 1e-5 \
     --max_grad_norm 1.0
@@ -1028,7 +1028,7 @@ python -m fl.keys generate dp --output dp_params.pkl \
 
 **Light Privacy (Compliance):**
 ```bash
-python -m fl.keys generate dp --output dp_params.pkl \
+python -m fl.keys generate dp --output dp_params.json \
     --epsilon 3.0 \
     --delta 1e-5 \
     --max_grad_norm 2.0
@@ -1072,12 +1072,12 @@ For T rounds of FL with per-round privacy (ε, δ):
 
 **Solution 1**: Increase epsilon
 ```bash
-python -m fl.keys generate dp --output dp_params.pkl --epsilon 2.0  # Instead of 1.0
+python -m fl.keys generate dp --output dp_params.json --epsilon 2.0  # Instead of 1.0
 ```
 
 **Solution 2**: Increase max_grad_norm
 ```bash
-python -m fl.keys generate dp --output dp_params.pkl --max_grad_norm 2.0  # Instead of 1.0
+python -m fl.keys generate dp --output dp_params.json --max_grad_norm 2.0  # Instead of 1.0
 ```
 
 **Solution 3**: Train for more rounds
@@ -1088,14 +1088,14 @@ python -m fl.keys generate dp --output dp_params.pkl --max_grad_norm 2.0  # Inst
 
 **Solution**: Decrease epsilon
 ```bash
-python -m fl.keys generate dp --output dp_params.pkl --epsilon 0.5  # Instead of 1.0
+python -m fl.keys generate dp --output dp_params.json --epsilon 0.5  # Instead of 1.0
 ```
 
 #### Problem: "Parameters not found"
 
 **Solution**: Create DP parameters first
 ```bash
-python -m fl.keys generate dp --output dp_params.pkl
+python -m fl.keys generate dp --output dp_params.json
 ```
 
 ---
@@ -1111,8 +1111,8 @@ python -m fl.keys generate dp --output dp_params.pkl
 
 ### Next Steps
 
-1. ✅ Create DP parameters: `python -m fl.keys generate dp --output dp_params.pkl`
-2. ✅ Test DP mode: `python simulation.py simulation --dp --dp_params dp_params.pkl`
+1. ✅ Create DP parameters: `python -m fl.keys generate dp --output dp_params.json`
+2. ✅ Test DP mode: `python simulation.py simulation --dp --dp_params dp_params.json`
 3. ✅ Compare all 10 modes: `python compare.py --dataset healthcare --modes all`
 4. 📊 Run epsilon sweep: `python compare.py --dataset healthcare --simulation --epsilon-sweep`
 5. 📊 Run alpha sweep: `python compare.py --dataset healthcare --simulation --alpha-sweep`

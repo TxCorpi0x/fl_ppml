@@ -55,10 +55,10 @@ This layering is composable and safe: each mechanism operates at a distinct pipe
 cd fl_ppml
 
 ## Generate HE keys (TenSEAL CKKS context)
-python -m fl.keys generate he_tenseal --secret keys/he_tenseal/secret_key.pkl --public keys/he_tenseal/public_key.pkl
+python -m fl.keys generate he_tenseal --secret keys/he_tenseal/secret_context.bin --public keys/he_tenseal/public_context.bin
 
 ## Generate DP parameters (ε=1.0, δ=1e-5)
-python -m fl.keys generate dp --output keys/dp/dp_params.pkl --epsilon 1.0 --delta 1e-5
+python -m fl.keys generate dp --output keys/dp/dp_params.json --epsilon 1.0 --delta 1e-5
 
 ## Build and start gnark proof service (required for ZKP modes)
 cd zkp_gnark_service
@@ -314,7 +314,7 @@ python simulation.py simulation \
 ## With specific privacy mode
 python simulation.py simulation --he --rounds 2 --benchmark
 python simulation.py simulation --zkp --zkp_backend gnark --benchmark
-python simulation.py simulation --dp --dp_params dp_params.pkl --benchmark
+python simulation.py simulation --dp --dp_params dp_params.json --benchmark
 ```
 
 ### Understanding Results
@@ -371,8 +371,9 @@ python simulation.py simulation --dp --dp_params dp_params.pkl --benchmark
 | TFHE accuracy 2–3% lower | Quantization error (int8 weights) | Expected trade-off |
 | DP accuracy unchanged during `--epsilon-sweep` | `dp_epsilon` sentinel (10.0) used | Pass `--dp-epsilon` flag or use `--epsilon-sweep` |
 | DP accuracy drops significantly | ε too small (strong noise) | Increase ε when generating DP params, e.g. `python -m fl.keys generate dp --epsilon 1.0` |
-| `FileNotFoundError: secret.pkl` | HE keys not generated | `python -m fl.keys generate he_tenseal` |
-| `FileNotFoundError: dp_params.pkl` | DP params not generated | `python -m fl.keys generate dp --output dp_params.pkl` |
+| `FileNotFoundError: keys/he_tenseal/secret_context.bin` | HE keys not generated | `python -m fl.keys generate he_tenseal` |
+| `... is not a TenSEAL key file of this version` / `... is not a JSON parameter file` | key or parameter file from before pickle files were retired | regenerate it with `python -m fl.keys generate <mode>` |
+| `FileNotFoundError: dp_params.json` | DP params not generated | `python -m fl.keys generate dp --output dp_params.json` |
 | Port 8081–8084 busy | Docker port conflict | Change ports in `docker-compose.yml` |
 | Blockchain table shows all zeros | Stale ledger from pre-fix run | Re-run; parser correctly unwraps `{"ledger": [...]}` format |
 | `ledger_comparison.json` missing | `--chain-backend none` was set | Re-run without `--chain-backend none` (default is `mock`) |

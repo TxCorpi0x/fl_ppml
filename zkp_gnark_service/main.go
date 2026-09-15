@@ -58,10 +58,18 @@ type proofCircuit struct {
 	Hash    frontend.Variable `gnark:",public"`
 }
 
+// int64Offset maps a signed 64-bit witness into [0, 2^64) for its range check.
+var int64Offset = new(big.Int).Lsh(big.NewInt(1), 63)
+
 func (c *proofCircuit) Define(api frontend.API) error {
 	hasher, _ := gnarkmimc.NewMiMC(api)
 	sum := api.Sub(0, 0) // Start with zero
 	for _, w := range c.Weights {
+		// Each witness is a signed 64-bit integer, so Σw² ≤ n·2^126 can't wrap the
+		// field. Without this, a prover whose hash isn't recomputed by the verifier
+		// (/verify_light) could pick large field elements whose squares sum to a
+		// small value modulo the field.
+		api.ToBinary(api.Add(w, int64Offset), 64)
 		hasher.Write(w)
 		sq := api.Mul(w, w)
 		sum = api.Add(sum, sq)

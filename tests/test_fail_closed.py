@@ -400,7 +400,7 @@ def test_ledger_save_failure_raises(tmp_path):
 def test_tenseal_server_without_public_key_refuses_real_mode():
     from fl.privacy.he_tenseal import HeTensealMode
 
-    missing = "/nonexistent/public_key.pkl"
+    missing = "/nonexistent/public_context.bin"
     with pytest.raises(FileNotFoundError):
         HeTensealMode().setup_server_context(NS(he_tenseal_public_path=missing, sim_mode=False))
     assert HeTensealMode().setup_server_context(NS(he_tenseal_public_path=missing, sim_mode=True)) is None
@@ -458,7 +458,7 @@ def test_skipped_modes_are_reported_and_fail_the_run(tmp_path, monkeypatch):
     import fl.compare.runner as runner
     from fl.compare.registry import MODES
 
-    monkeypatch.setattr(MODES["dp"], "check_prerequisites", lambda: "Missing prerequisite: keys/dp/dp_params.pkl")
+    monkeypatch.setattr(MODES["dp"], "check_prerequisites", lambda: "Missing prerequisite: keys/dp/dp_params.json")
     monkeypatch.setattr(MODES["baseline"], "check_prerequisites", lambda: None)
     monkeypatch.setattr(
         runner,

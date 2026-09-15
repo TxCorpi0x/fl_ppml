@@ -329,45 +329,45 @@ def _build_mode_flags(mode_cfg: ModeConfig) -> list:
         if b:
             flags.extend(["--he_backend", b])
         if b != "concrete_tfhe":
-            flags.extend(["--path_keys", "keys/he_tenseal/secret_key.pkl"])
-            flags.extend(["--path_public_key", "keys/he_tenseal/public_key.pkl"])
+            flags.extend(["--path_keys", "keys/he_tenseal/secret_context.bin"])
+            flags.extend(["--path_public_key", "keys/he_tenseal/public_context.bin"])
     elif m == "he_zkp":
         # Hybrid: HE encryption + ZKP integrity proofs
         flags.append("--he")
         if b:
             flags.extend(["--he_backend", b])
         if b != "concrete_tfhe":
-            flags.extend(["--path_keys", "keys/he_tenseal/secret_key.pkl"])
-            flags.extend(["--path_public_key", "keys/he_tenseal/public_key.pkl"])
+            flags.extend(["--path_keys", "keys/he_tenseal/secret_context.bin"])
+            flags.extend(["--path_public_key", "keys/he_tenseal/public_context.bin"])
         flags.append("--zkp")
         zkp_backend = os.environ.get("FL_ZKP_BACKEND", "gnark").lower()
         flags.extend(["--zkp_backend", zkp_backend])
         if zkp_backend != "gnark":
-            flags.extend(["--zkp_params", "keys/zkp/zkp_params.pkl"])
+            flags.extend(["--zkp_params", "keys/zkp/zkp_params.json"])
     elif m == "he_zkp_dp":
         # Triple: HE encryption + ZKP integrity proofs + DP-SGD noise
         flags.append("--he")
         if b:
             flags.extend(["--he_backend", b])
         if b != "concrete_tfhe":
-            flags.extend(["--path_keys", "keys/he_tenseal/secret_key.pkl"])
-            flags.extend(["--path_public_key", "keys/he_tenseal/public_key.pkl"])
+            flags.extend(["--path_keys", "keys/he_tenseal/secret_context.bin"])
+            flags.extend(["--path_public_key", "keys/he_tenseal/public_context.bin"])
         flags.append("--zkp")
         zkp_backend = os.environ.get("FL_ZKP_BACKEND", "gnark").lower()
         flags.extend(["--zkp_backend", zkp_backend])
         if zkp_backend != "gnark":
-            flags.extend(["--zkp_params", "keys/zkp/zkp_params.pkl"])
+            flags.extend(["--zkp_params", "keys/zkp/zkp_params.json"])
         flags.append("--dp")
-        flags.extend(["--dp_params", "keys/dp/dp_params.pkl"])
+        flags.extend(["--dp_params", "keys/dp/dp_params.json"])
     elif m == "zkp":
         flags.append("--zkp")
         zkp_backend = os.environ.get("FL_ZKP_BACKEND", "gnark").lower()
         flags.extend(["--zkp_backend", zkp_backend])
         if zkp_backend != "gnark":
-            flags.extend(["--zkp_params", "keys/zkp/zkp_params.pkl"])
+            flags.extend(["--zkp_params", "keys/zkp/zkp_params.json"])
     elif m == "dp":
         flags.append("--dp")
-        flags.extend(["--dp_params", "keys/dp/dp_params.pkl"])
+        flags.extend(["--dp_params", "keys/dp/dp_params.json"])
 
     return flags
 

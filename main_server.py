@@ -52,9 +52,9 @@ def _build_parser() -> argparse.ArgumentParser:
     # Privacy-mode flags (legacy API)
     srv.add_argument("--he", action="store_true", default=False)
     srv.add_argument("--he_backend", type=str, default="tenseal")
-    srv.add_argument("--path_keys", type=str, default="keys/he_tenseal/secret_key.pkl")
+    srv.add_argument("--path_keys", type=str, default="keys/he_tenseal/secret_context.bin")
     srv.add_argument(
-        "--path_public_key", type=str, default="keys/he_tenseal/public_key.pkl"
+        "--path_public_key", type=str, default="keys/he_tenseal/public_context.bin"
     )
     srv.add_argument("--zkp", action="store_true", default=False)
     srv.add_argument("--zkp_backend", type=str, default="gnark")
@@ -64,9 +64,9 @@ def _build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Registered privacy mode name; overrides the --he/--zkp/--dp flag combination.",
     )
-    srv.add_argument("--zkp_params", type=str, default="keys/zkp/zkp_params.pkl")
+    srv.add_argument("--zkp_params", type=str, default="keys/zkp/zkp_params.json")
     srv.add_argument("--dp", action="store_true", default=False)
-    srv.add_argument("--dp_params", type=str, default="keys/dp/dp_params.pkl")
+    srv.add_argument("--dp_params", type=str, default="keys/dp/dp_params.json")
     srv.add_argument(
         "--dp_epsilon",
         type=float,
@@ -221,7 +221,13 @@ def main() -> None:
 
     mode = get_privacy_mode(mode_name)
     benchmark = (
-        init_benchmark(mode_name, config.num_clients, config.num_rounds)
+        init_benchmark(
+            mode_name,
+            config.num_clients,
+            config.num_rounds,
+            transport="network",
+            zkp_backend=config.zkp_backend if "zkp" in mode_name else None,
+        )
         if args.benchmark
         else None
     )

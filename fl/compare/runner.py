@@ -422,8 +422,15 @@ def _merge_into_dataset_report(
     # entry: that would swap valid evidence for a failure record.
     for r in new_results:
         mode = r.get("mode")
-        if mode and r.get("success"):
-            existing[mode] = r
+        if not (mode and r.get("success")):
+            continue
+        # A simulated run (HE transports plaintext) never replaces a networked one.
+        new_transport = (r.get("benchmark") or {}).get("transport")
+        old_transport = ((existing.get(mode) or {}).get("benchmark") or {}).get("transport", "network")
+        if mode in existing and new_transport == "simulated" and old_transport != "simulated":
+            print(f"[WARN]  {mode}: simulated result not merged over a networked result in the dataset report")
+            continue
+        existing[mode] = r
 
     merged = list(existing.values())
     with open(dataset_report_path, "w") as f:

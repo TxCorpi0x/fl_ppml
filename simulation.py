@@ -57,9 +57,9 @@ def _build_parser() -> argparse.ArgumentParser:
         default="tenseal",
         choices=["tenseal", "concrete", "concrete_tfhe"],
     )
-    sim.add_argument("--path_keys", type=str, default="keys/he_tenseal/secret_key.pkl")
+    sim.add_argument("--path_keys", type=str, default="keys/he_tenseal/secret_context.bin")
     sim.add_argument(
-        "--path_public_key", type=str, default="keys/he_tenseal/public_key.pkl"
+        "--path_public_key", type=str, default="keys/he_tenseal/public_context.bin"
     )
     sim.add_argument("--zkp", action="store_true", default=False)
     sim.add_argument("--zkp_backend", type=str, default="gnark")
@@ -69,9 +69,9 @@ def _build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Registered privacy mode name; overrides the --he/--zkp/--dp flag combination.",
     )
-    sim.add_argument("--zkp_params", type=str, default="keys/zkp/zkp_params.pkl")
+    sim.add_argument("--zkp_params", type=str, default="keys/zkp/zkp_params.json")
     sim.add_argument("--dp", action="store_true", default=False)
-    sim.add_argument("--dp_params", type=str, default="keys/dp/dp_params.pkl")
+    sim.add_argument("--dp_params", type=str, default="keys/dp/dp_params.json")
     sim.add_argument(
         "--dp_epsilon",
         type=float,

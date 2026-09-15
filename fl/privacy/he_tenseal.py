@@ -22,7 +22,6 @@ from __future__ import annotations
 import gc
 import io
 import os
-import pickle
 import struct
 import zlib
 from typing import Any, Dict, List, Optional, Tuple
@@ -145,29 +144,23 @@ class HeTensealMode(PrivacyMode):
 
     def setup_client_context(self, config):
         """Load or create TenSEAL context with the secret key."""
-        import tenseal as ts
         from fl.core.security import make_tenseal_context
+        from fl.keys.he_tenseal import load_client, write_context
 
         secret_path = config.he_tenseal_secret_path
-        os.makedirs(os.path.dirname(secret_path) or ".", exist_ok=True)
-
         if os.path.exists(secret_path):
-            with open(secret_path, "rb") as f:
-                query = pickle.load(f)
-            ctx = ts.context_from(query["contexte"])
+            ctx = load_client(secret_path)
             print(f"[HE-TenSEAL] Client context loaded from {secret_path}")
         else:
             ctx = make_tenseal_context()
-            with open(secret_path, "wb") as f:
-                pickle.dump({"contexte": ctx.serialize(save_secret_key=True)}, f)
+            write_context(secret_path, ctx.serialize(save_secret_key=True))
             print(f"[HE-TenSEAL] New client context created → {secret_path}")
 
         return ctx
 
     def setup_server_context(self, config):
         """Load public TenSEAL context (no secret key) for server-side aggregation."""
-        import tenseal as ts
-        from fl.core.security import read_query
+        from fl.keys.he_tenseal import load_server
 
         public_path = config.he_tenseal_public_path
         if not os.path.exists(public_path):
@@ -181,8 +174,7 @@ class HeTensealMode(PrivacyMode):
                 "Run: python -m fl.keys generate he_tenseal"
             )
 
-        _, raw_context = read_query(public_path)
-        ctx = ts.context_from(raw_context)
+        ctx = load_server(public_path)
         print(f"[HE-TenSEAL] Server context loaded from {public_path}")
         return ctx
 

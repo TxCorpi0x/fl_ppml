@@ -2,29 +2,34 @@
 fl.keys.he_tenseal — TenSEAL CKKS key generation and loading.
 
 Key material:
-    secret.pkl      — client-side context (has secret key)
-    server_key.pkl  — server-side context (public key only)
+    secret_context.bin  — client-side context (has the secret key)
+    public_context.bin  — server-side context (public key only)
+
+Files hold TenSEAL's own context serialization behind a short header. They are
+never unpickled: a key file can't execute code when it's loaded.
 
 Usage::
 
     from fl.keys.he_tenseal import generate, load_client, load_server
 
-    generate(secret_path="keys/he_tenseal/secret_key.pkl", public_path="keys/he_tenseal/public_key.pkl")
-    client_ctx = load_client("keys/he_tenseal/secret_key.pkl")
-    server_ctx = load_server("keys/he_tenseal/public_key.pkl")
+    generate()
+    client_ctx = load_client("keys/he_tenseal/secret_context.bin")
+    server_ctx = load_server("keys/he_tenseal/public_context.bin")
 """
 
 from __future__ import annotations
 
 import os
-import pickle
-from pathlib import Path
+
+SECRET_PATH = "keys/he_tenseal/secret_context.bin"
+PUBLIC_PATH = "keys/he_tenseal/public_context.bin"
+_MAGIC = b"FLTENSEAL1\n"
 
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
 
 
-def _make_context():
+def make_context():
     """Create a fresh TenSEAL CKKS context with secret key."""
     import tenseal as ts
 
@@ -38,23 +43,30 @@ def _make_context():
     return ctx
 
 
-def _write(path: str, ctx_bytes: bytes) -> None:
+def write_context(path: str, ctx_bytes: bytes) -> None:
     os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
     with open(path, "wb") as f:
-        pickle.dump({"contexte": ctx_bytes}, f)
+        f.write(_MAGIC + ctx_bytes)
 
 
-def _read_bytes(path: str) -> bytes:
+def read_context_bytes(path: str) -> bytes:
+    """Serialized context bytes from a key file; refuses anything else, including legacy pickles."""
     with open(path, "rb") as f:
-        return pickle.load(f)["contexte"]
+        data = f.read()
+    if not data.startswith(_MAGIC):
+        raise ValueError(
+            f"{path} is not a TenSEAL key file of this version (legacy pickle files are no longer "
+            "loaded because unpickling can execute code). Regenerate: python -m fl.keys generate he_tenseal"
+        )
+    return data[len(_MAGIC):]
 
 
 # ── Public API ────────────────────────────────────────────────────────────────
 
 
 def generate(
-    secret_path: str = "keys/he_tenseal/secret_key.pkl",
-    public_path: str = "keys/he_tenseal/public_key.pkl",
+    secret_path: str = SECRET_PATH,
+    public_path: str = PUBLIC_PATH,
     overwrite: bool = False,
 ) -> None:
     """
@@ -73,21 +85,21 @@ def generate(
                 f"{p} already exists. Pass overwrite=True to regenerate."
             )
 
-    ctx = _make_context()
-    _write(secret_path, ctx.serialize(save_secret_key=True))
-    _write(public_path, ctx.serialize())
+    ctx = make_context()
+    write_context(secret_path, ctx.serialize(save_secret_key=True))
+    write_context(public_path, ctx.serialize())
 
     print(f"[he_tenseal] Secret (private) context → {secret_path}")
     print(f"[he_tenseal] Public context           → {public_path}")
 
     # Verify
-    client_ctx = ts.context_from(_read_bytes(secret_path))
-    server_ctx = ts.context_from(_read_bytes(public_path))
+    client_ctx = ts.context_from(read_context_bytes(secret_path))
+    server_ctx = ts.context_from(read_context_bytes(public_path))
     print(f"[he_tenseal] client private? {client_ctx.is_private()}")  # True
     print(f"[he_tenseal] server private? {server_ctx.is_private()}")  # False
 
 
-def load_client(secret_path: str = "keys/he_tenseal/secret_key.pkl"):
+def load_client(secret_path: str = SECRET_PATH):
     """Load and return a TenSEAL context with the secret key (client side)."""
     import tenseal as ts
 
@@ -96,10 +108,10 @@ def load_client(secret_path: str = "keys/he_tenseal/secret_key.pkl"):
             f"Secret key file not found: {secret_path}\n"
             f"Run: python -m fl.keys generate he_tenseal"
         )
-    return ts.context_from(_read_bytes(secret_path))
+    return ts.context_from(read_context_bytes(secret_path))
 
 
-def load_server(public_path: str = "keys/he_tenseal/public_key.pkl"):
+def load_server(public_path: str = PUBLIC_PATH):
     """Load and return a TenSEAL context without the secret key (server side)."""
     import tenseal as ts
 
@@ -108,9 +120,12 @@ def load_server(public_path: str = "keys/he_tenseal/public_key.pkl"):
             f"Public key file not found: {public_path}\n"
             f"Run: python -m fl.keys generate he_tenseal"
         )
-    return ts.context_from(_read_bytes(public_path))
+    ctx = ts.context_from(read_context_bytes(public_path))
+    if ctx.is_private():
+        raise ValueError(f"{public_path} contains a secret key; the server must only hold the public context")
+    return ctx
 
 
-def load(secret_path: str = "keys/he_tenseal/secret_key.pkl"):
+def load(secret_path: str = SECRET_PATH):
     """Alias for ``load_client`` — used by the unified fl.keys.load() dispatcher."""
     return load_client(secret_path)

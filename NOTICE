@@ -1,0 +1,26 @@
+ppflx — privacy-preserving federated learning with HE, ZKP and DP on Flower
+Copyright 2026 CorpiXo
+
+Licensed under the Apache License, Version 2.0. See LICENSE.
+
+This product does not bundle third-party source code. It depends on, and is
+designed to run against, the following components under their own licences:
+
+  Flower (flwr)                Apache-2.0        https://flower.ai
+  gnark, gnark-crypto          Apache-2.0        https://github.com/Consensys/gnark
+  TenSEAL                      Apache-2.0        https://github.com/OpenMined/TenSEAL
+  PyTorch, NumPy, scikit-learn BSD-3-Clause
+  Ray                          Apache-2.0
+
+  Concrete-ML, concrete-python BSD-3-Clause-Clear (Zama)
+
+Concrete-ML and concrete-python are licensed under the BSD 3-Clause Clear
+licence, which grants NO patent rights. Zama states that its libraries are
+free for development, research, prototyping and experimentation, and that
+commercial use requires a commercial patent licence from Zama. The TFHE
+privacy modes that use them are an optional extra of this project; using them
+commercially is the user's responsibility.
+
+Datasets are not distributed with this project. Each dataset is obtained from
+its own source under its own terms (for example, the credit-card fraud dataset
+is distributed via Kaggle under that dataset's licence).

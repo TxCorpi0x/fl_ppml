@@ -1,0 +1,16 @@
+cff-version: 1.2.0
+title: "ppflx: privacy-preserving federated learning with HE, ZKP and DP on Flower"
+message: "If you use this software, please cite it as below."
+type: software
+authors:
+  - name: "CorpiXo"
+    # Add the individual author entry here (given-names / family-names / orcid)
+    # so academic citations name a person as well as the organisation.
+license: Apache-2.0
+version: 1.0.0
+date-released: "2026-09-16"
+repository-code: "https://github.com/TxCorpi0x/fl_ppml"
+abstract: >-
+  A framework and benchmark for privacy-preserving federated learning that
+  combines homomorphic encryption, Groth16 zero-knowledge proofs of bounded
+  model updates, and differential privacy, with an on-chain audit ledger.

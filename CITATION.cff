@@ -1,6 +1,9 @@
 cff-version: 1.2.0
-title: "ppflx: privacy-preserving federated learning with HE, ZKP and DP on Flower"
-message: "If you use this software, please cite it as below."
+title: "fl_ppml: privacy-preserving federated learning with HE, ZKP and DP on Flower (archived monorepo)"
+message: >-
+  This repository is archived. To cite the software as it is maintained now,
+  cite ppflx, the proof service, or the benchmarks (listed under references).
+  Cite this repository for the work as it stood up to the 2026-09-16 split.
 type: software
 authors:
   - name: "CorpiXo"
@@ -10,7 +13,37 @@ license: Apache-2.0
 version: 1.0.0
 date-released: "2026-09-16"
 repository-code: "https://github.com/TxCorpi0x/fl_ppml"
+url: "https://github.com/CorpiXo/ppflx"
+keywords:
+  - federated learning
+  - homomorphic encryption
+  - zero-knowledge proofs
+  - differential privacy
+  - Flower
 abstract: >-
   A framework and benchmark for privacy-preserving federated learning that
   combines homomorphic encryption, Groth16 zero-knowledge proofs of bounded
-  model updates, and differential privacy, with an on-chain audit ledger.
+  model updates, and differential privacy, with an on-chain audit ledger. On
+  2026-09-16 this monorepo was split into a library, a proof service and a
+  benchmark harness, each carrying the history of its files; development
+  continues there. This repository remains the record of the combined history
+  and of the benchmark results produced before the split.
+references:
+  - type: software
+    title: "ppflx: privacy-preserving federated learning on Flower"
+    authors:
+      - name: "CorpiXo"
+    repository-code: "https://github.com/CorpiXo/ppflx"
+    license: Apache-2.0
+  - type: software
+    title: "gnark-gradient-prover: Groth16 proofs of bounded model updates"
+    authors:
+      - name: "CorpiXo"
+    repository-code: "https://github.com/CorpiXo/gnark-gradient-prover"
+    license: Apache-2.0
+  - type: software
+    title: "ppflx-bench: benchmarks for privacy-preserving federated learning"
+    authors:
+      - name: "CorpiXo"
+    repository-code: "https://github.com/CorpiXo/ppflx-bench"
+    license: Apache-2.0

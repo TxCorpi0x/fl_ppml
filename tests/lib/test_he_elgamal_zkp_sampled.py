@@ -17,7 +17,7 @@ from flwr.common import Code, FitRes, Status, ndarrays_to_parameters, parameters
 import ppflx.core.sampling as sampling
 from ppflx.core import elgamal_gnark as eg
 from ppflx.privacy.he_elgamal_zkp_sampled import HeElGamalZKPSampledMode
-from tests.conftest import break_gnark, requires_gnark, use_gnark
+from tests.lib.conftest import break_gnark, requires_gnark, use_gnark
 
 pytestmark = requires_gnark
 

@@ -18,7 +18,7 @@ from flwr.common import Code, FitRes, Status, ndarrays_to_parameters, parameters
 
 from ppflx.core import zkp_gnark
 from ppflx.core.zkp_gnark import generate_gnark_proofs
-from tests.conftest import requires_gnark, use_gnark
+from tests.lib.conftest import requires_gnark, use_gnark
 
 pytestmark = requires_gnark
 

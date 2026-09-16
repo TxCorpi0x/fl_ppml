@@ -12,7 +12,7 @@ import pytest
 import torch
 from flwr.common import Code, FitRes, Status, ndarrays_to_parameters
 
-from tests.conftest import requires_gnark, use_gnark
+from tests.lib.conftest import requires_gnark, use_gnark
 
 
 class _Model(torch.nn.Module):

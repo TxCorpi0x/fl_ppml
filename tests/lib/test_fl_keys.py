@@ -5,7 +5,7 @@ from contextlib import redirect_stdout
 from pathlib import Path
 
 # Always run relative to the fl_ppml project root
-PROJECT_ROOT = Path(__file__).parent.parent
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
 os.chdir(PROJECT_ROOT)
 sys.path.insert(0, str(PROJECT_ROOT))
 

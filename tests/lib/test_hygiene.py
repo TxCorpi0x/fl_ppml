@@ -89,33 +89,7 @@ def test_benchmark_records_transport_and_zkp_backend():
         init_benchmark("dp", 3, 2, transport="plaintext")
 
 
-def test_report_marks_simulated_he_results(capsys):
-    from ppflx_bench.compare.report import print_summary
 
-    bm = lambda transport: {"transport": transport, "rounds": 1, "num_clients": 2, "timing": {}, "model_quality": {}}
-    print_summary([
-        {"mode": "he_tenseal", "success": True, "benchmark": bm("simulated")},
-        {"mode": "zkp", "success": True, "benchmark": bm("network")},
-    ])
-    lines = {line.split()[0]: line for line in capsys.readouterr().out.splitlines() if line.startswith(("he_tenseal", "zkp"))}
-    assert "[SIM]" in lines["he_tenseal"] and "[SIM]" not in lines["zkp"]
-
-
-def test_simulated_result_never_replaces_a_networked_one(tmp_path):
-    from ppflx_bench.compare.runner import _merge_into_dataset_report
-
-    networked = {"mode": "he_tenseal", "success": True, "benchmark": {"transport": "network", "rounds": 20}}
-    (tmp_path / "healthcare").mkdir()
-    report = tmp_path / "healthcare" / "comparison_report.json"
-    report.write_text(json.dumps([networked]))
-
-    simulated = {"mode": "he_tenseal", "success": True, "benchmark": {"transport": "simulated", "rounds": 2}}
-    _merge_into_dataset_report([simulated], str(tmp_path), "healthcare")
-    assert json.loads(report.read_text()) == [networked]
-
-    newer = {"mode": "he_tenseal", "success": True, "benchmark": {"transport": "network", "rounds": 5}}
-    _merge_into_dataset_report([newer], str(tmp_path), "healthcare")
-    assert json.loads(report.read_text()) == [newer]
 
 
 # ─── Initial models are reproducible ─────────────────────────────────────────

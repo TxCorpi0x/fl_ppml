@@ -14,7 +14,7 @@ from flwr.common import Code, FitRes, Status, ndarrays_to_parameters, parameters
 
 from ppflx.core.sampling import sample_indices, sample_size
 from ppflx.privacy.zkp_sampled import ZKPSampledMode
-from tests.conftest import requires_gnark, use_gnark
+from tests.lib.conftest import requires_gnark, use_gnark
 
 pytestmark = requires_gnark
 

@@ -13,7 +13,7 @@ from ppflx.core.zkp_gnark import (
     verify_gnark_proofs,
     verify_gnark_proofs_light,
 )
-from tests.conftest import TEST_NORM_N, gnark_setup, requires_gnark, start_gnark
+from tests.lib.conftest import TEST_NORM_N, gnark_setup, requires_gnark, start_gnark
 
 pytestmark = requires_gnark
 

@@ -14,7 +14,7 @@ from flwr.common import Code, FitRes, Status, ndarrays_to_parameters, parameters
 
 from ppflx.core import elgamal_gnark as eg
 from ppflx.privacy.he_elgamal_zkp import HeElGamalZKPMode
-from tests.conftest import break_gnark, requires_gnark, use_gnark
+from tests.lib.conftest import break_gnark, requires_gnark, use_gnark
 
 pytestmark = requires_gnark
 
@@ -349,8 +349,3 @@ def test_tfhe_on_image_dataset_refuses_silent_plaintext(monkeypatch):
     assert _auto_disable_real_tfhe_for_images(NS(dataset="healthcare"), False) is False
 
 
-def test_harness_does_not_force_partial_encryption():
-    from ppflx_bench.compare.experiment import _grpc_env
-
-    assert "FL_ENCRYPT_LAYERS" not in _grpc_env({})
-    assert _grpc_env({"FL_ENCRYPT_LAYERS": "ALL"})["FL_ENCRYPT_LAYERS"] == "ALL"

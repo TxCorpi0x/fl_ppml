@@ -10,7 +10,7 @@ from types import SimpleNamespace
 import pytest
 import requests
 
-GNARK_BINARY = Path(os.environ.get("FL_GNARK_BINARY", Path(__file__).resolve().parents[1] / "zkp_gnark_service" / "gnark_service"))
+GNARK_BINARY = Path(os.environ.get("FL_GNARK_BINARY", Path(__file__).resolve().parents[2] / "zkp_gnark_service" / "gnark_service"))
 TEST_NORM_N, TEST_ELGAMAL_N = 8, 4
 
 requires_gnark = pytest.mark.skipif(

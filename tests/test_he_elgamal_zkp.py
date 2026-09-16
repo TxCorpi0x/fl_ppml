@@ -12,8 +12,8 @@ import pytest
 import torch
 from flwr.common import Code, FitRes, Status, ndarrays_to_parameters, parameters_to_ndarrays
 
-from fl.core import elgamal_gnark as eg
-from fl.privacy.he_elgamal_zkp import HeElGamalZKPMode
+from ppflx.core import elgamal_gnark as eg
+from ppflx.privacy.he_elgamal_zkp import HeElGamalZKPMode
 from tests.conftest import break_gnark, requires_gnark, use_gnark
 
 pytestmark = requires_gnark
@@ -23,7 +23,7 @@ SCALE, BOUND = 1000, 0.5
 
 @pytest.fixture(scope="module")
 def keys(tmp_path_factory):
-    from fl.keys.he_elgamal import generate
+    from ppflx.keys.he_elgamal import generate
 
     d = tmp_path_factory.mktemp("elgamal_keys")
     secret, public = str(d / "secret_key.json"), str(d / "public_key.json")
@@ -296,7 +296,7 @@ def test_server_without_bound_schema_refuses_to_aggregate(keys):
 
 
 def test_server_key_file_must_not_contain_secret(keys):
-    from fl.keys.he_elgamal import load_server
+    from ppflx.keys.he_elgamal import load_server
 
     with pytest.raises(ValueError, match="secret key"):
         load_server(keys.he_elgamal_secret_path)
@@ -311,8 +311,8 @@ def test_simulation_mode_is_refused(keys):
 
 
 def test_tenseal_encrypts_every_layer_by_default(monkeypatch):
-    from fl.core.security import _CVEC_MAGIC, make_tenseal_context
-    from fl.privacy.he_tenseal import HeTensealMode, _unpack_arrays
+    from ppflx.core.security import _CVEC_MAGIC, make_tenseal_context
+    from ppflx.privacy.he_tenseal import HeTensealMode, _unpack_arrays
     import zlib
 
     monkeypatch.delenv("FL_ENCRYPT_LAYERS", raising=False)
@@ -325,8 +325,8 @@ def test_tenseal_encrypts_every_layer_by_default(monkeypatch):
 
 
 def test_tenseal_rejects_encrypt_layer_names_missing_from_model(monkeypatch):
-    from fl.core.security import make_tenseal_context
-    from fl.privacy.he_tenseal import HeTensealMode
+    from ppflx.core.security import make_tenseal_context
+    from ppflx.privacy.he_tenseal import HeTensealMode
 
     monkeypatch.setenv("FL_ENCRYPT_LAYERS", "model.0.weight")
     with pytest.raises(ValueError, match="not in the model"):
@@ -334,7 +334,7 @@ def test_tenseal_rejects_encrypt_layer_names_missing_from_model(monkeypatch):
 
 
 def test_tfhe_on_image_dataset_refuses_silent_plaintext(monkeypatch):
-    from fl.privacy.he_concrete_tfhe import _auto_disable_real_tfhe_for_images
+    from ppflx.privacy.he_concrete_tfhe import _auto_disable_real_tfhe_for_images
 
     config = NS(dataset="mnist")
     monkeypatch.delenv("FL_CONCRETE_TFHE_FORCE_REAL", raising=False)
@@ -350,7 +350,7 @@ def test_tfhe_on_image_dataset_refuses_silent_plaintext(monkeypatch):
 
 
 def test_harness_does_not_force_partial_encryption():
-    from fl.compare.experiment import _grpc_env
+    from ppflx_bench.compare.experiment import _grpc_env
 
     assert "FL_ENCRYPT_LAYERS" not in _grpc_env({})
     assert _grpc_env({"FL_ENCRYPT_LAYERS": "ALL"})["FL_ENCRYPT_LAYERS"] == "ALL"

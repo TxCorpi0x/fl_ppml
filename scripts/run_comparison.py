@@ -44,8 +44,8 @@ def main() -> None:
 
     modes = ALL_MODES if "all" in args.modes else args.modes
 
-    from fl import FLConfig
-    from fl.runner import run_comparison
+    from ppflx import FLConfig
+    from ppflx_bench.runner import run_comparison
 
     config = FLConfig(
         dataset=args.dataset,

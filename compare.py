@@ -41,7 +41,7 @@ import sys
 
 
 def _list_registry() -> None:
-    from fl.compare.registry import DATASETS, MODES
+    from ppflx_bench.compare.registry import DATASETS, MODES
 
     print("\nDatasets:")
     for name, ds in DATASETS.items():
@@ -191,8 +191,8 @@ def main(argv=None) -> int:
     modes = [m.strip() for m in args.modes.split(",")] if args.modes else None
 
     import signal
-    from fl.compare.experiment import cleanup_all_procs
-    from fl.compare.runner import run_comparison, run_alpha_sweep, run_dp_epsilon_sweep
+    from ppflx_bench.compare.experiment import cleanup_all_procs
+    from ppflx_bench.compare.runner import run_comparison, run_alpha_sweep, run_dp_epsilon_sweep
 
     def _sighandler(signum, frame):
         print(

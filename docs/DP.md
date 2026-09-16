@@ -536,7 +536,7 @@ python compare.py --dataset healthcare --rounds 10 --epsilon-sweep
 
 **Programmatic API:**
 ```python
-from fl.compare import run_dp_epsilon_sweep
+from ppflx_bench.compare import run_dp_epsilon_sweep
 
 results = run_dp_epsilon_sweep(
     dataset="healthcare",
@@ -589,17 +589,17 @@ For thesis or paper reporting, the epsilon sweep generates Figure 1 of any empir
 
 ### 14.1 Problem: Key File Coupling
 
-The standard approach to configuring DP in this framework is to pre-generate a `dp_params.json` file using the unified CLI (`python -m fl.keys generate dp`). This file stores:
+The standard approach to configuring DP in this framework is to pre-generate a `dp_params.json` file using the unified CLI (`python -m ppflx.keys generate dp`). This file stores:
 - $\varepsilon$ (the target privacy budget)
 - $\delta$ (the failure probability)
 - `max_grad_norm` $C$ (the gradient clipping threshold)
 - `noise_multiplier` $\sigma$ (derived from $\varepsilon$, $\delta$, $n$, $B$, $T$)
 
-This pre-generation step makes sense for production deployments where generating cryptographic parameters is expensive. However, for sweep experiments, generating a new `dp_params.json` file for each of the 6 sweep points is operationally cumbersome: it would require 6 separate `python -m fl.keys generate dp` invocations, 6 separate key files, and a mechanism to pass the correct file for each sweep point.
+This pre-generation step makes sense for production deployments where generating cryptographic parameters is expensive. However, for sweep experiments, generating a new `dp_params.json` file for each of the 6 sweep points is operationally cumbersome: it would require 6 separate `python -m ppflx.keys generate dp` invocations, 6 separate key files, and a mechanism to pass the correct file for each sweep point.
 
 ### 14.2 The Sentinel Pattern
 
-The framework solves this by introducing a **runtime epsilon override** mechanism in `fl/privacy/dp.py`. The key insight is that the noise multiplier $\sigma$ can be re-derived at process startup from any $\varepsilon$ value using the closed-form formula, without regenerating the key file:
+The framework solves this by introducing a **runtime epsilon override** mechanism in `ppflx/privacy/dp.py`. The key insight is that the noise multiplier $\sigma$ can be re-derived at process startup from any $\varepsilon$ value using the closed-form formula, without regenerating the key file:
 
 $$\sigma = \frac{\sqrt{2 \ln(1.25/\delta)}}{\varepsilon}$$
 
@@ -614,7 +614,7 @@ FLConfig.dp_epsilon
     != 10.0  →  override: recompute σ = sqrt(2·ln(1.25/δ)) / dp_epsilon
 ```
 
-The override code in `fl/privacy/dp.py` executes at `DifferentialPrivacyMode.setup_client_context()`:
+The override code in `ppflx/privacy/dp.py` executes at `DifferentialPrivacyMode.setup_client_context()`:
 
 ```python
 params = load_dp_params(config.dp_params_path)   # load dp_params.json
@@ -629,7 +629,7 @@ The `dp_params.json` file on disk is **not modified**. The override exists only 
 
 ### 14.3 Forwarding Through Subprocess Chains
 
-In distributed mode, `compare.py` spawns server and client subprocesses. The `dp_epsilon` override must reach these subprocesses as a CLI flag. This is implemented in `fl/compare/experiment.py`'s `common_args` dictionary:
+In distributed mode, `compare.py` spawns server and client subprocesses. The `dp_epsilon` override must reach these subprocesses as a CLI flag. This is implemented in `ppflx_bench/compare/experiment.py`'s `common_args` dictionary:
 
 ```python
 common_args = {
@@ -823,16 +823,16 @@ DP adds **calibrated noise** to model parameters/gradients such that:
 
 ```bash
 ## Default configuration (ε=1.0, δ=1e-5)
-python -m fl.keys generate dp --output dp_params.json
+python -m ppflx.keys generate dp --output dp_params.json
 
 ## Custom privacy budget
-python -m fl.keys generate dp --output dp_params.json --epsilon 0.5 --delta 1e-5 --max_grad_norm 1.0
+python -m ppflx.keys generate dp --output dp_params.json --epsilon 0.5 --delta 1e-5 --max_grad_norm 1.0
 
 ## Very strong privacy
-python -m fl.keys generate dp --output dp_params.json --epsilon 0.1 --delta 1e-6 --max_grad_norm 0.5
+python -m ppflx.keys generate dp --output dp_params.json --epsilon 0.1 --delta 1e-6 --max_grad_norm 0.5
 
 ## Weak privacy (compliance only)
-python -m fl.keys generate dp --output dp_params.json --epsilon 5.0 --delta 1e-5 --max_grad_norm 2.0
+python -m ppflx.keys generate dp --output dp_params.json --epsilon 5.0 --delta 1e-5 --max_grad_norm 2.0
 ```
 
 This creates `dp_params.json` with your DP configuration.
@@ -841,7 +841,7 @@ This creates `dp_params.json` with your DP configuration.
 
 **Simulation Runtime:**
 ```bash
-python -m fl.launch --mode dp --simulation \
+python -m ppflx_bench.launch --mode dp --simulation \
     --dp-params-path dp_params.json \
     --num-rounds 5 --num-clients 4 --local-epochs 1 --batch-size 32 \
     --results-dir ./results/dp_test/
@@ -849,7 +849,7 @@ python -m fl.launch --mode dp --simulation \
 
 **Federated (a local SuperLink and one SuperNode per client):**
 ```bash
-python -m fl.launch --mode dp \
+python -m ppflx_bench.launch --mode dp \
     --dp-params-path dp_params.json \
     --num-rounds 5 --num-clients 4 --local-epochs 1 \
     --results-dir ./results/dp_federated/
@@ -985,7 +985,7 @@ The benchmark system tracks DP-specific metrics:
 
 **High Privacy (Medical/Financial):**
 ```bash
-python -m fl.keys generate dp --output dp_params.json \
+python -m ppflx.keys generate dp --output dp_params.json \
     --epsilon 0.5 \
     --delta 1e-6 \
     --max_grad_norm 0.5
@@ -993,7 +993,7 @@ python -m fl.keys generate dp --output dp_params.json \
 
 **Standard Privacy (Personal Data):**
 ```bash
-python -m fl.keys generate dp --output dp_params.json \
+python -m ppflx.keys generate dp --output dp_params.json \
     --epsilon 1.0 \
     --delta 1e-5 \
     --max_grad_norm 1.0
@@ -1001,7 +1001,7 @@ python -m fl.keys generate dp --output dp_params.json \
 
 **Light Privacy (Compliance):**
 ```bash
-python -m fl.keys generate dp --output dp_params.json \
+python -m ppflx.keys generate dp --output dp_params.json \
     --epsilon 3.0 \
     --delta 1e-5 \
     --max_grad_norm 2.0
@@ -1045,12 +1045,12 @@ For T rounds of FL with per-round privacy (ε, δ):
 
 **Solution 1**: Increase epsilon
 ```bash
-python -m fl.keys generate dp --output dp_params.json --epsilon 2.0  # Instead of 1.0
+python -m ppflx.keys generate dp --output dp_params.json --epsilon 2.0  # Instead of 1.0
 ```
 
 **Solution 2**: Increase max_grad_norm
 ```bash
-python -m fl.keys generate dp --output dp_params.json --max_grad_norm 2.0  # Instead of 1.0
+python -m ppflx.keys generate dp --output dp_params.json --max_grad_norm 2.0  # Instead of 1.0
 ```
 
 **Solution 3**: Train for more rounds
@@ -1061,14 +1061,14 @@ python -m fl.keys generate dp --output dp_params.json --max_grad_norm 2.0  # Ins
 
 **Solution**: Decrease epsilon
 ```bash
-python -m fl.keys generate dp --output dp_params.json --epsilon 0.5  # Instead of 1.0
+python -m ppflx.keys generate dp --output dp_params.json --epsilon 0.5  # Instead of 1.0
 ```
 
 #### Problem: "Parameters not found"
 
 **Solution**: Create DP parameters first
 ```bash
-python -m fl.keys generate dp --output dp_params.json
+python -m ppflx.keys generate dp --output dp_params.json
 ```
 
 ---
@@ -1084,12 +1084,12 @@ python -m fl.keys generate dp --output dp_params.json
 
 ### Next Steps
 
-1. ✅ Create DP parameters: `python -m fl.keys generate dp --output dp_params.json`
-2. ✅ Test DP mode: `python -m fl.launch --mode dp --simulation --dp-params-path dp_params.json`
+1. ✅ Create DP parameters: `python -m ppflx.keys generate dp --output dp_params.json`
+2. ✅ Test DP mode: `python -m ppflx_bench.launch --mode dp --simulation --dp-params-path dp_params.json`
 3. ✅ Compare all 10 modes: `python compare.py --dataset healthcare --modes all`
 4. 📊 Run epsilon sweep: `python compare.py --dataset healthcare --simulation --epsilon-sweep`
 5. 📊 Run alpha sweep: `python compare.py --dataset healthcare --simulation --alpha-sweep`
-6. 🔧 Tune parameters: Adjust ε when generating DP params via `python -m fl.keys generate dp --epsilon <value>` based on accuracy/privacy tradeoff
+6. 🔧 Tune parameters: Adjust ε when generating DP params via `python -m ppflx.keys generate dp --epsilon <value>` based on accuracy/privacy tradeoff
 7. 📈 See [README.md](README.md) for full benchmarks across all modes
 8. 🔒 See [Section 13](#13-the-privacy-utility-tradeoff-curve-epsilon-sweep-experiment) for sweep methodology and academic framing
 

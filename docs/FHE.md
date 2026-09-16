@@ -790,7 +790,7 @@ This two-mode design is central to the FL security model: clients generate a sha
 #### 3.3 This Framework's Parameters
 
 ```python
-## From `fl.keys` or programmatic example
+## From `ppflx.keys` or programmatic example
 context = ts.context(
     ts.SCHEME_TYPE.CKKS,
     poly_modulus_degree = 8192,
@@ -834,11 +834,11 @@ This is managed in the framework by ensuring all client ciphertexts use the same
 
 #### 4.1 Context Management
 
-The framework stores contexts as raw bytes behind a short header (`fl.keys.he_tenseal`), never with pickle: unpickling a swapped key file can execute code.
+The framework stores contexts as raw bytes behind a short header (`ppflx.keys.he_tenseal`), never with pickle: unpickling a swapped key file can execute code.
 
 ```python
 import tenseal as ts
-from fl.keys.he_tenseal import read_context_bytes, write_context
+from ppflx.keys.he_tenseal import read_context_bytes, write_context
 
 ## --- Creating a context ---
 context = ts.context(
@@ -1064,17 +1064,17 @@ This typically means:
 
 ### 7. Usage in This FL Framework
 
-#### 7.1 Key Generation (fl.keys CLI / programmatic example)
+#### 7.1 Key Generation (ppflx.keys CLI / programmatic example)
 
 ```bash
-python -m fl.keys generate he_tenseal
+python -m ppflx.keys generate he_tenseal
 ## writes keys/he_tenseal/secret_context.bin (clients) and keys/he_tenseal/public_context.bin (server)
 ```
 
 Programmatically:
 
 ```python
-from fl.keys.he_tenseal import generate
+from ppflx.keys.he_tenseal import generate
 
 generate(secret_path="keys/he_tenseal/secret_context.bin", public_path="keys/he_tenseal/public_context.bin")
 ```
@@ -1085,7 +1085,7 @@ Loaders refuse anything that isn't a key file of this format, including legacy p
 
 ```python
 ## Load context with secret key
-from fl.keys.he_tenseal import load_client
+from ppflx.keys.he_tenseal import load_client
 
 context = load_client("keys/he_tenseal/secret_context.bin")
 
@@ -1115,7 +1115,7 @@ def decrypt_parameters(encrypted_dict, context, model_shapes):
 
 ```python
 ## Load evaluation context (NO secret key); refuses a file that contains one
-from fl.keys.he_tenseal import load_server
+from ppflx.keys.he_tenseal import load_server
 
 server_context = load_server("keys/he_tenseal/public_context.bin")
 

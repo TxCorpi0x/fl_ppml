@@ -7,7 +7,7 @@ uses small pinned test keys (tests/conftest.py), never the committed ones.
 import numpy as np
 import pytest
 
-from fl.core.zkp_gnark import (
+from ppflx.core.zkp_gnark import (
     GnarkServiceError,
     generate_gnark_proofs,
     verify_gnark_proofs,
@@ -29,7 +29,7 @@ def state_dict():
 
 
 def test_generate_emits_one_complete_pinned_proof_per_layer(gnark, state_dict):
-    from fl.core.gnark_keys import NORM_CIRCUIT, pinned_vk_sha256
+    from ppflx.core.gnark_keys import NORM_CIRCUIT, pinned_vk_sha256
 
     proofs, proof_bytes = generate_gnark_proofs(state_dict, service_url=gnark.prover)
 

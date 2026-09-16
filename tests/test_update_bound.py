@@ -1,13 +1,13 @@
-"""Update-norm bound helpers (fl/core/update_bound.py). No gnark service needed."""
+"""Update-norm bound helpers (ppflx/core/update_bound.py). No gnark service needed."""
 
 from types import SimpleNamespace as NS
 
 import numpy as np
 import pytest
 
-from fl.core import elgamal_gnark as eg
-from fl.core import update_bound as ub
-from fl.core import zkp_gnark
+from ppflx.core import elgamal_gnark as eg
+from ppflx.core import update_bound as ub
+from ppflx.core import zkp_gnark
 
 
 def test_bound_scales_with_local_steps_unless_overridden(monkeypatch):
@@ -30,9 +30,9 @@ def test_bound_scales_with_local_steps_unless_overridden(monkeypatch):
 def test_strategy_derives_client_batches_for_the_bound(monkeypatch):
     import torch
 
-    from fl.config import FLConfig
-    from fl.privacy.zkp import ZKPMode
-    from fl.server import make_strategy
+    from ppflx.config import FLConfig
+    from ppflx.privacy.zkp import ZKPMode
+    from ppflx.server import make_strategy
 
     monkeypatch.delenv("FL_ZKP_MAX_NORM", raising=False)
     monkeypatch.setitem(ub.PER_STEP_UPDATE_NORM, "healthcare", 0.001)

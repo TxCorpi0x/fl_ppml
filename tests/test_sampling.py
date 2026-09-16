@@ -1,4 +1,4 @@
-"""Server-seeded coordinate sampling (fl/core/sampling.py)."""
+"""Server-seeded coordinate sampling (ppflx/core/sampling.py)."""
 
 import math
 from collections import Counter
@@ -6,7 +6,7 @@ from collections import Counter
 import numpy as np
 import pytest
 
-from fl.core.sampling import (
+from ppflx.core.sampling import (
     detection_probability,
     new_round_seed,
     sample_indices,

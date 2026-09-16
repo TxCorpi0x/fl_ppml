@@ -55,10 +55,10 @@ This layering is composable and safe: each mechanism operates at a distinct pipe
 cd fl_ppml
 
 ## Generate HE keys (TenSEAL CKKS context)
-python -m fl.keys generate he_tenseal --secret keys/he_tenseal/secret_context.bin --public keys/he_tenseal/public_context.bin
+python -m ppflx.keys generate he_tenseal --secret keys/he_tenseal/secret_context.bin --public keys/he_tenseal/public_context.bin
 
 ## Generate DP parameters (ε=1.0, δ=1e-5)
-python -m fl.keys generate dp --output keys/dp/dp_params.json --epsilon 1.0 --delta 1e-5
+python -m ppflx.keys generate dp --output keys/dp/dp_params.json --epsilon 1.0 --delta 1e-5
 
 ## Build and start gnark proof service (required for ZKP modes)
 cd zkp_gnark_service
@@ -220,12 +220,12 @@ python compare.py --dataset healthcare --chain-ledger-dir /tmp/my_ledgers
 
 **Blockchain Audit Ledger**
 
-Every run records a per-round audit trail via `fl/chain.py`. Two backends are available:
+Every run records a per-round audit trail via `ppflx/chain.py`. Two backends are available:
 
 | Backend | Description |
 |---------|-------------|
 | `mock` (default) | Writes JSON ledger files locally; zero external dependencies |
-| `web3` | Submits transactions to a live EVM node (see `fl/config.py` for `chain_rpc_url`) |
+| `web3` | Submits transactions to a live EVM node (see `ppflx/config.py` for `chain_rpc_url`) |
 | `none` | Disables the audit ledger entirely |
 
 After every run the console prints a blockchain audit table:
@@ -251,7 +251,7 @@ The combined ledger is saved to `results/<dataset>/<timestamp>/ledger_comparison
 
 **What the runner does:**
 1. Detects which modes need the gnark service; auto-starts it if not running
-2. Runs each mode on a local Flower SuperLink with one SuperNode process per client (`fl.launch`)
+2. Runs each mode on a local Flower SuperLink with one SuperNode process per client (`ppflx_bench.launch`)
 3. Collects `benchmark.json` from each mode
 4. Merges results into `results/<dataset>/<timestamp>/comparison_report.json`
 5. Merges per-mode chain ledger JSONs into `ledger_comparison.json`
@@ -307,11 +307,11 @@ See [README.md](README.md) for full Docker instructions.
 
 ```bash
 ## One mode on a local SuperLink and SuperNodes
-python -m fl.launch --mode baseline --num-clients 2 --num-rounds 2 --local-epochs 1
+python -m ppflx_bench.launch --mode baseline --num-clients 2 --num-rounds 2 --local-epochs 1
 
 ## Flower Simulation Runtime (HE modes transport plaintext)
-python -m fl.launch --mode he_tenseal --simulation --num-rounds 2
-python -m fl.launch --mode dp --simulation --num-rounds 2
+python -m ppflx_bench.launch --mode he_tenseal --simulation --num-rounds 2
+python -m ppflx_bench.launch --mode dp --simulation --num-rounds 2
 ```
 
 ### Understanding Results
@@ -356,10 +356,10 @@ The stored results under `results/` predate the current ZKP protocols, key handl
 | TenSEAL: `scale out of bounds` | CKKS coefficient modulus overflow | Already fixed; ensure `global_scale=2^40` |
 | TFHE accuracy 2–3% lower | Quantization error (int8 weights) | Expected trade-off |
 | DP accuracy unchanged during `--epsilon-sweep` | `dp_epsilon` sentinel (10.0) used | Pass `--dp-epsilon` flag or use `--epsilon-sweep` |
-| DP accuracy drops significantly | ε too small (strong noise) | Increase ε when generating DP params, e.g. `python -m fl.keys generate dp --epsilon 1.0` |
-| `FileNotFoundError: keys/he_tenseal/secret_context.bin` | HE keys not generated | `python -m fl.keys generate he_tenseal` |
-| `... is not a TenSEAL key file of this version` / `... is not a JSON parameter file` | key or parameter file from before pickle files were retired | regenerate it with `python -m fl.keys generate <mode>` |
-| `FileNotFoundError: dp_params.json` | DP params not generated | `python -m fl.keys generate dp --output dp_params.json` |
+| DP accuracy drops significantly | ε too small (strong noise) | Increase ε when generating DP params, e.g. `python -m ppflx.keys generate dp --epsilon 1.0` |
+| `FileNotFoundError: keys/he_tenseal/secret_context.bin` | HE keys not generated | `python -m ppflx.keys generate he_tenseal` |
+| `... is not a TenSEAL key file of this version` / `... is not a JSON parameter file` | key or parameter file from before pickle files were retired | regenerate it with `python -m ppflx.keys generate <mode>` |
+| `FileNotFoundError: dp_params.json` | DP params not generated | `python -m ppflx.keys generate dp --output dp_params.json` |
 | Port 8081–8084 busy | Docker port conflict | Change ports in `docker-compose.yml` |
 | Blockchain table shows all zeros | Stale ledger from pre-fix run | Re-run; parser correctly unwraps `{"ledger": [...]}` format |
 | `ledger_comparison.json` missing | `--chain-backend none` was set | Re-run without `--chain-backend none` (default is `mock`) |
@@ -394,7 +394,7 @@ All tuning is done via environment variables — no code changes required. Varia
 | `FL_ZKP_SAMPLE_SEED` | — | Integer | Fixes layer sampling for reproducible benchmarks; omit to vary across rounds |
 | `FL_ZKP_PARALLELISM` | `4` | Positive integer | Concurrent proof workers. Increase for high-core servers; diminishing returns above gnark host CPU count |
 | `FL_ZKP_SCALE` | `1000000` | Positive integer | Float→int64 scale. Too low = precision loss; too high = integer overflow |
-| `FL_ZKP_MAX_NORM` | calibrated | Positive float | Server's update-norm bound B on ‖w_local − w_global‖₂ (overrides the per-dataset calibration in `fl/core/update_bound.py`). Not the DP clipping norm |
+| `FL_ZKP_MAX_NORM` | calibrated | Positive float | Server's update-norm bound B on ‖w_local − w_global‖₂ (overrides the per-dataset calibration in `ppflx/core/update_bound.py`). Not the DP clipping norm |
 | `FL_ZKP_TIMEOUT` | `120` | Seconds | Per-call timeout for the gnark HTTP service. Increase for large models or first-run compilation |
 | `FL_ZKP_LAYERS` | `ALL` | `ALL` or CSV names | Layers to prove in full (non-sampled) ZKP mode |
 
@@ -541,7 +541,7 @@ docker compose --profile dp down -v
 
 - Networking: Clients connect to the server using the service hostname (e.g., `server_he:8082`) via `FL_SERVER_ADDRESS`.
 - Healthchecks: Clients wait for the server port to be open via simple TCP checks.
-- Keys/Params: use the unified CLI `fl.keys` (e.g. `python -m fl.keys generate he_tenseal`, `python -m fl.keys generate zkp`, `python -m fl.keys generate dp`) to write artifacts into the project directory mounted into all services.
+- Keys/Params: use the unified CLI `ppflx.keys` (e.g. `python -m ppflx.keys generate he_tenseal`, `python -m ppflx.keys generate zkp`, `python -m ppflx.keys generate dp`) to write artifacts into the project directory mounted into all services.
 - Results: Per-client training curves and benchmarks are saved under `./results/<mode>`.
 - Aggregation/Plots: You can reuse `compare_methods_simple.py` to generate comparison plots from fresh runs, or adapt a simple aggregator to read `client_*_benchmark.json` files.
 	- Included: `scripts/aggregate_results.py` to aggregate Docker-run results and generate `comparison_report.json` and `comparison.png`.
@@ -556,9 +556,9 @@ The Python runner supports all 10 modes natively without Docker:
 cd fl_ppml
 
 ## One-time setup
-python -m fl.keys generate he_tenseal --overwrite
-python -m fl.keys generate dp --overwrite
-python -m fl.keys generate zkp --overwrite
+python -m ppflx.keys generate he_tenseal --overwrite
+python -m ppflx.keys generate dp --overwrite
+python -m ppflx.keys generate zkp --overwrite
 cd zkp_gnark_service && go build -o gnark_service main.go && ./gnark_service & cd ..
 
 ## Run all 10 modes

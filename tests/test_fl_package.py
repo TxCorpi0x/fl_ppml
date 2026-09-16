@@ -23,7 +23,7 @@ import pytest
 
 
 def test_dataset_registry():
-    from fl.datasets import list_datasets, get_dataset_loader
+    from ppflx_bench.datasets import list_datasets, get_dataset_loader
 
     datasets = list_datasets()
     assert "creditcard" in datasets
@@ -34,7 +34,7 @@ def test_dataset_registry():
 
 
 def test_model_registry():
-    from fl.models import list_models, get_model
+    from ppflx.models import list_models, get_model
 
     models = list_models()
     assert "tabular" in models
@@ -45,7 +45,7 @@ def test_model_registry():
 
 
 def test_privacy_registry():
-    from fl.privacy import list_modes, get_privacy_mode
+    from ppflx.privacy import list_modes, get_privacy_mode
 
     modes = list_modes()
     expected = {
@@ -65,7 +65,7 @@ def test_privacy_registry():
 
 
 def test_config_defaults():
-    from fl.config import FLConfig
+    from ppflx.config import FLConfig
 
     cfg = FLConfig()
     assert cfg.dataset == "creditcard"
@@ -77,7 +77,7 @@ def test_config_defaults():
 
 
 def test_config_he_property():
-    from fl.config import FLConfig
+    from ppflx.config import FLConfig
 
     for mode in ["he_tenseal", "he_concrete_tfhe"]:
         cfg = FLConfig(privacy_mode=mode)
@@ -85,7 +85,7 @@ def test_config_he_property():
 
 
 def test_config_from_dict():
-    from fl.config import FLConfig
+    from ppflx.config import FLConfig
 
     cfg = FLConfig.from_dict(
         {"dataset": "healthcare", "num_rounds": 5, "unknown_key": "ignored"}
@@ -99,7 +99,7 @@ def test_config_from_dict():
 
 def test_model_for_batch_tabular():
     import torch
-    from fl.models import get_model_for_batch
+    from ppflx.models import get_model_for_batch
 
     batch = (torch.randn(32, 30), torch.zeros(32, dtype=torch.long))
     net = get_model_for_batch(batch, num_classes=2)
@@ -109,7 +109,7 @@ def test_model_for_batch_tabular():
 
 def test_model_for_batch_image():
     import torch
-    from fl.models import get_model_for_batch
+    from ppflx.models import get_model_for_batch
 
     batch = (torch.randn(4, 3, 32, 32), torch.zeros(4, dtype=torch.long))
     net = get_model_for_batch(batch, num_classes=10)
@@ -121,8 +121,8 @@ def test_model_for_batch_image():
 
 
 def test_baseline_contexts():
-    from fl.config import FLConfig
-    from fl.privacy import get_privacy_mode
+    from ppflx.config import FLConfig
+    from ppflx.privacy import get_privacy_mode
 
     cfg = FLConfig()
     mode = get_privacy_mode("baseline")
@@ -135,8 +135,8 @@ def test_dp_context_without_params_file_requires_explicit_epsilon():
 
     import pytest
 
-    from fl.config import FLConfig
-    from fl.privacy import get_privacy_mode
+    from ppflx.config import FLConfig
+    from ppflx.privacy import get_privacy_mode
 
     mode = get_privacy_mode("dp")
     # The default dp_epsilon is the "load from file" sentinel; silently using it
@@ -154,8 +154,8 @@ def test_dp_context_without_params_file_requires_explicit_epsilon():
 
 
 def test_register_custom_mode():
-    from fl.privacy.registry import register_mode, get_privacy_mode, _REGISTRY
-    from fl.privacy.base import PrivacyMode
+    from ppflx.privacy.registry import register_mode, get_privacy_mode, _REGISTRY
+    from ppflx.privacy.base import PrivacyMode
 
     @register_mode("_test_custom")
     class CustomMode(PrivacyMode):
@@ -177,8 +177,8 @@ def test_register_custom_mode():
 
 
 def test_register_custom_dataset():
-    from fl.datasets.registry import register_dataset, get_dataset_loader, _REGISTRY
-    from fl.datasets.base import DatasetLoader, DatasetSpec
+    from ppflx_bench.datasets.registry import register_dataset, get_dataset_loader, _REGISTRY
+    from ppflx_bench.datasets.base import DatasetLoader, DatasetSpec
 
     @register_dataset("_test_ds")
     class TestDS(DatasetLoader):

@@ -96,7 +96,7 @@ def gnark(gnark_test_keys):
 
 def use_gnark(monkeypatch, gnark) -> None:
     """Point the Python ZKP clients at the session's prover and verifier."""
-    import fl.core.zkp_gnark as zkp_gnark
+    import ppflx.core.zkp_gnark as zkp_gnark
 
     monkeypatch.setattr(zkp_gnark, "DEFAULT_PROVER_URL", gnark.prover)
     monkeypatch.setattr(zkp_gnark, "DEFAULT_VERIFIER_URL", gnark.verifier)
@@ -104,7 +104,7 @@ def use_gnark(monkeypatch, gnark) -> None:
 
 def break_gnark(monkeypatch, url: str = "http://127.0.0.1:1") -> None:
     """Point both service roles at an unreachable address."""
-    import fl.core.zkp_gnark as zkp_gnark
+    import ppflx.core.zkp_gnark as zkp_gnark
 
     monkeypatch.setattr(zkp_gnark, "DEFAULT_PROVER_URL", url)
     monkeypatch.setattr(zkp_gnark, "DEFAULT_VERIFIER_URL", url)

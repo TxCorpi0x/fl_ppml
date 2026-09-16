@@ -485,19 +485,19 @@ The combined modes in this framework (e.g., `he_tenseal_zkp`) layer confidential
 
 This framework was built around a single architectural principle: **privacy modes are plugins, not branches**. In many FL implementations, adding a new privacy mechanism requires modifying the client's training loop, the server's aggregation logic, and the parameter serialization — introducing if/elif chains that grow unwieldy as the number of modes increases.
 
-Here, all mode-specific behavior is encapsulated in a `PrivacyMode` subclass (defined in `fl/privacy/base.py`). The Flower client (`fl/client.py`) and strategy (`fl/server.py`) contain no mode-specific logic at all — they delegate every privacy-related operation to the plugin via well-defined hooks: `setup_client_context`, `send_parameters`, `receive_parameters`, `aggregate_fit_override`. Adding a new mode requires only implementing a new `PrivacyMode` subclass, registered with `@register_mode("new_mode_name")`; no other files need editing.
+Here, all mode-specific behavior is encapsulated in a `PrivacyMode` subclass (defined in `ppflx/privacy/base.py`). The Flower client (`ppflx/client.py`) and strategy (`ppflx/server.py`) contain no mode-specific logic at all — they delegate every privacy-related operation to the plugin via well-defined hooks: `setup_client_context`, `send_parameters`, `receive_parameters`, `aggregate_fit_override`. Adding a new mode requires only implementing a new `PrivacyMode` subclass, registered with `@register_mode("new_mode_name")`; no other files need editing.
 
 This design yields several practical benefits:
 
-**Testing isolation**: Each mode can be tested independently without touching the FL orchestration code. A unit test for CKKS encryption tests only `fl/privacy/he_tenseal.py`, not `client.py` or `server.py`.
+**Testing isolation**: Each mode can be tested independently without touching the FL orchestration code. A unit test for CKKS encryption tests only `ppflx/privacy/he_tenseal.py`, not `client.py` or `server.py`.
 
 **Compositional safety**: Mode combinations (`he_tenseal_zkp`) are implemented as composite plugins that chain the hooks of two modes, rather than as special-cased client logic. The composition is explicit and auditable.
 
-**Benchmark orthogonality**: The benchmarking infrastructure (`fl/core/benchmark.py`) measures timings at hook boundaries, so adding a mode automatically includes it in all benchmark comparisons without additional instrumentation.
+**Benchmark orthogonality**: The benchmarking infrastructure (`ppflx/core/benchmark.py`) measures timings at hook boundaries, so adding a mode automatically includes it in all benchmark comparisons without additional instrumentation.
 
 ### The FLConfig Dataclass
 
-All FL experiment configuration flows through a single `FLConfig` dataclass defined in `fl/config.py`. This is a departure from the common pattern of passing configuration through argparse namespaces or environment variables, which leads to implicit dependencies and makes it difficult to trace which code is affected by which parameters.
+All FL experiment configuration flows through a single `FLConfig` dataclass defined in `ppflx/config.py`. This is a departure from the common pattern of passing configuration through argparse namespaces or environment variables, which leads to implicit dependencies and makes it difficult to trace which code is affected by which parameters.
 
 `FLConfig` contains every tunable parameter in the system:
 
@@ -514,13 +514,13 @@ A single config object is instantiated at the entry point and passed to every co
 
 Flower (flwr 1.36) provides the network transport, node management and round orchestration. The project is a Flower App (declared in `pyproject.toml`) built on Flower's Message API:
 
-- A **SuperLink** accepts SuperNode connections and runs the **ServerApp** (`fl.server:server_app`). The ServerApp builds an `FLConfig` from the run config and runs the `FedPrivate` strategy, which samples nodes, sends `train` and `evaluate` messages carrying an `ArrayRecord` (the model) and a `ConfigRecord`, and aggregates the replies.
-- Each **SuperNode** runs the **ClientApp** (`fl.client:client_app`) in a fresh process for every message. The ClientApp rebuilds a `FlowerClient` from the run config and its `partition-id`, trains or evaluates, and replies with an `ArrayRecord`, a `ConfigRecord` of metrics (including proof payloads) and a `MetricRecord`.
-- State a mode needs across rounds (the commit–challenge commitment) is kept in the node's `Context.state`, encoded as JSON, arrays and byte strings (`fl/records.py`); nothing is pickled.
+- A **SuperLink** accepts SuperNode connections and runs the **ServerApp** (`ppflx.server:server_app`). The ServerApp builds an `FLConfig` from the run config and runs the `FedPrivate` strategy, which samples nodes, sends `train` and `evaluate` messages carrying an `ArrayRecord` (the model) and a `ConfigRecord`, and aggregates the replies.
+- Each **SuperNode** runs the **ClientApp** (`ppflx.client:client_app`) in a fresh process for every message. The ClientApp rebuilds a `FlowerClient` from the run config and its `partition-id`, trains or evaluates, and replies with an `ArrayRecord`, a `ConfigRecord` of metrics (including proof payloads) and a `MetricRecord`.
+- State a mode needs across rounds (the commit–challenge commitment) is kept in the node's `Context.state`, encoded as JSON, arrays and byte strings (`ppflx/records.py`); nothing is pickled.
 
 Flower knows nothing about HE, ZKP, or DP. It moves arrays between the ServerApp and ClientApps; all privacy-specific transformation happens in `FlowerClient.fit` and `FedPrivate.aggregate_fit`, which call into the privacy plugin. The plugin sees each reply as a `(node, FitRes)` pair whose `node.cid` is the SuperNode id assigned by the SuperLink, not an identifier the client chooses.
 
-`fl.launch` starts the SuperLink and SuperNodes locally and submits the run with `flwr run`. With `--simulation`, the SuperLink runs Flower's Simulation Runtime instead, dispatching ClientApps to Ray workers without SuperNode processes; in that mode HE plugins transport plaintext.
+`ppflx_bench.launch` starts the SuperLink and SuperNodes locally and submits the run with `flwr run`. With `--simulation`, the SuperLink runs Flower's Simulation Runtime instead, dispatching ClientApps to Ray workers without SuperNode processes; in that mode HE plugins transport plaintext.
 
 ### The Ten Privacy Modes
 
@@ -545,7 +545,7 @@ The **triple modes** (`he_tenseal_zkp_dp`, `he_concrete_tfhe_zkp_dp`) combine al
 
 ### The Benchmark System
 
-Every privacy mode integration is instrumented by `fl/core/benchmark.py`, which wraps key operations in `BenchmarkTimer` context managers. The benchmark records:
+Every privacy mode integration is instrumented by `ppflx/core/benchmark.py`, which wraps key operations in `BenchmarkTimer` context managers. The benchmark records:
 
 - **Per-round timing**: total round duration, local training time, encryption/decryption time, proof generation time, proof verification time, noise addition time
 - **Communication metrics**: total bytes uploaded per client per round (inferred from parameter size and mode expansion factor)

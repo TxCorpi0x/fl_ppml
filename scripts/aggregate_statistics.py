@@ -394,7 +394,7 @@ def _plot(dataset: str, results: Dict, output_path: str) -> None:
     # Try to get mode colors from registry
     mode_colors: Dict[str, str] = {}
     try:
-        from fl.compare.registry import MODES
+        from ppflx_bench.compare.registry import MODES
 
         for mk, mc in MODES.items():
             color = getattr(mc, "color", None)

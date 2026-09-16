@@ -158,7 +158,7 @@ sys.path.insert(0, '.')
 os.environ['FL_ZKP_PROVER_URL'] = 'http://127.0.0.1:9000'
 
 try:
-    from fl.core.zkp_gnark import generate_gnark_proofs
+    from ppflx.core.zkp_gnark import generate_gnark_proofs
     import numpy as np
     
     # Generate test parameters
@@ -203,7 +203,7 @@ echo "║                                                                ║"
 echo "║  Next: Run FL with gnark backend                               ║"
 echo "║                                                                ║"
 echo "║    export FL_ZKP_BACKEND=gnark                                 ║"
-echo "║    python -m fl.launch --mode zkp --num-rounds 3               ║"
+echo "║    python -m ppflx_bench.launch --mode zkp --num-rounds 3               ║"
 echo "║                                                                ║"
 echo "╚════════════════════════════════════════════════════════════════╝"
 echo ""

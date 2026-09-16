@@ -5,13 +5,13 @@ import sys
 
 sys.path.insert(0, ".")
 
-from fl.compare.benchmark import (
+from ppflx_bench.compare.benchmark import (
     is_stats_dict,
     aggregate_stats_dicts,
     aggregate_client_benchmarks,
     merge_server_and_clients,
 )
-from fl.compare.diagnostics import add_diagnostics
+from ppflx_bench.compare.diagnostics import add_diagnostics
 
 # Alias to match original test names
 _is_stats_dict = is_stats_dict

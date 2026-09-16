@@ -26,7 +26,7 @@ def _legacy_pickle(path):
 
 
 def test_tenseal_key_files_round_trip_and_refuse_legacy_pickles(tmp_path):
-    from fl.keys import he_tenseal
+    from ppflx.keys import he_tenseal
 
     secret, public = tmp_path / "secret_context.bin", tmp_path / "public_context.bin"
     he_tenseal.generate(secret_path=str(secret), public_path=str(public))
@@ -42,7 +42,7 @@ def test_tenseal_key_files_round_trip_and_refuse_legacy_pickles(tmp_path):
 
 
 def test_dp_params_are_json_and_legacy_pickles_are_refused(tmp_path):
-    from fl.keys import dp
+    from ppflx.keys import dp
 
     path = tmp_path / "dp_params.json"
     dp.generate(output=str(path), epsilon=1.0, delta=1e-5)
@@ -56,7 +56,7 @@ def test_dp_params_are_json_and_legacy_pickles_are_refused(tmp_path):
 
 
 def test_pedersen_params_are_json_and_legacy_pickles_are_refused(tmp_path):
-    from fl.core.zkp import create_zkp_context, read_zkp_params, write_zkp_params
+    from ppflx.core.zkp import create_zkp_context, read_zkp_params, write_zkp_params
 
     path = tmp_path / "zkp_params.json"
     ctx = create_zkp_context(bit_length=256)
@@ -74,13 +74,13 @@ def test_pedersen_params_are_json_and_legacy_pickles_are_refused(tmp_path):
 
 
 def test_config_defaults_to_real_transport():
-    from fl.config import FLConfig
+    from ppflx.config import FLConfig
 
     assert FLConfig().sim_mode is False
 
 
 def test_benchmark_records_transport_and_zkp_backend():
-    from fl.core.benchmark import init_benchmark
+    from ppflx.core.benchmark import init_benchmark
 
     summary = init_benchmark("he_elgamal_zkp", 3, 2, transport="network", zkp_backend="gnark").summary()
     assert summary["transport"] == "network" and summary["zkp_backend"] == "gnark"
@@ -90,7 +90,7 @@ def test_benchmark_records_transport_and_zkp_backend():
 
 
 def test_report_marks_simulated_he_results(capsys):
-    from fl.compare.report import print_summary
+    from ppflx_bench.compare.report import print_summary
 
     bm = lambda transport: {"transport": transport, "rounds": 1, "num_clients": 2, "timing": {}, "model_quality": {}}
     print_summary([
@@ -102,7 +102,7 @@ def test_report_marks_simulated_he_results(capsys):
 
 
 def test_simulated_result_never_replaces_a_networked_one(tmp_path):
-    from fl.compare.runner import _merge_into_dataset_report
+    from ppflx_bench.compare.runner import _merge_into_dataset_report
 
     networked = {"mode": "he_tenseal", "success": True, "benchmark": {"transport": "network", "rounds": 20}}
     (tmp_path / "healthcare").mkdir()
@@ -126,10 +126,10 @@ def test_clients_and_server_build_the_same_initial_model(tmp_path):
     import torch
     from torch.utils.data import DataLoader, TensorDataset
 
-    from fl.client import make_client
-    from fl.config import FLConfig
-    from fl.privacy import get_privacy_mode
-    from fl.server import make_strategy
+    from ppflx.client import make_client
+    from ppflx.config import FLConfig
+    from ppflx.privacy import get_privacy_mode
+    from ppflx.server import make_strategy
 
     data = TensorDataset(torch.randn(32, 13), torch.randint(0, 2, (32,)))
     loaders = [DataLoader(data, batch_size=8, shuffle=True) for _ in range(2)]

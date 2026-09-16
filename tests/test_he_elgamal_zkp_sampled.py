@@ -14,9 +14,9 @@ import pytest
 import torch
 from flwr.common import Code, FitRes, Status, ndarrays_to_parameters, parameters_to_ndarrays
 
-import fl.core.sampling as sampling
-from fl.core import elgamal_gnark as eg
-from fl.privacy.he_elgamal_zkp_sampled import HeElGamalZKPSampledMode
+import ppflx.core.sampling as sampling
+from ppflx.core import elgamal_gnark as eg
+from ppflx.privacy.he_elgamal_zkp_sampled import HeElGamalZKPSampledMode
 from tests.conftest import break_gnark, requires_gnark, use_gnark
 
 pytestmark = requires_gnark
@@ -28,7 +28,7 @@ POISON_Q = 90_000  # in range (< 2^17) but an update of 90 ≫ BOUND
 
 @pytest.fixture(scope="module")
 def keys(tmp_path_factory):
-    from fl.keys.he_elgamal import generate
+    from ppflx.keys.he_elgamal import generate
 
     d = tmp_path_factory.mktemp("elgamal_sampled_keys")
     secret, public = str(d / "secret.json"), str(d / "public.json")
@@ -118,7 +118,7 @@ def test_honest_clients_commit_then_prove_and_aggregate(keys):
 @pytest.mark.parametrize("poison_is_sampled", [True, False])
 def test_poisoned_commitment_is_caught_only_if_sampled(keys, monkeypatch, attack, poison_is_sampled):
     seed = "11" * 32
-    monkeypatch.setattr("fl.privacy.commit_challenge.new_round_seed", lambda: seed)
+    monkeypatch.setattr("ppflx.privacy.commit_challenge.new_round_seed", lambda: seed)
     sampled = set(sampling.sample_indices(seed, N_COORDS, 3).tolist())
     coordinate = min(sampled) if poison_is_sampled else min(set(range(N_COORDS)) - sampled)
 
@@ -160,9 +160,9 @@ def test_poisoned_commitment_is_caught_only_if_sampled(keys, monkeypatch, attack
 def test_over_bound_sampled_update_with_valid_proofs_is_rejected(keys, monkeypatch):
     """A client library that skips the declaration check still can't get an over-bound update admitted."""
     seed = "22" * 32
-    monkeypatch.setattr("fl.privacy.commit_challenge.new_round_seed", lambda: seed)
+    monkeypatch.setattr("ppflx.privacy.commit_challenge.new_round_seed", lambda: seed)
     coordinate = int(sampling.sample_indices(seed, N_COORDS, 3)[0])
-    monkeypatch.setattr("fl.privacy.he_elgamal_zkp_sampled.split_bound", lambda energies, total: [max(1, int(e)) for e in energies])
+    monkeypatch.setattr("ppflx.privacy.he_elgamal_zkp_sampled.split_bound", lambda energies, total: [max(1, int(e)) for e in energies])
 
     server, sctx = _server(keys)
     g = _arrays(_net())

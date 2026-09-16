@@ -1,4 +1,4 @@
-"""Test fl.keys package — run with: conda run -n flEnv python3 tests/test_fl_keys.py"""
+"""Test ppflx.keys package — run with: conda run -n flEnv python3 tests/test_fl_keys.py"""
 
 import sys, os, io, tempfile
 from contextlib import redirect_stdout
@@ -22,7 +22,7 @@ def check(name, fn):
 
 # 1. Top-level imports + mode list
 def t_imports():
-    from fl.keys import list_modes, generate, load
+    from ppflx.keys import list_modes, generate, load
 
     assert sorted(list_modes()) == [
         "dp",
@@ -43,17 +43,17 @@ def _mod(m):
 
 
 for name, mod in [
-    ("he_tenseal_mod", "fl.keys.he_tenseal"),
-    ("dp_mod", "fl.keys.dp"),
-    ("zkp_mod", "fl.keys.zkp"),
-    ("concrete_tfhe_mod", "fl.keys.concrete_tfhe"),
+    ("he_tenseal_mod", "ppflx.keys.he_tenseal"),
+    ("dp_mod", "ppflx.keys.dp"),
+    ("zkp_mod", "ppflx.keys.zkp"),
+    ("concrete_tfhe_mod", "ppflx.keys.concrete_tfhe"),
 ]:
     check(name, lambda m=mod: _mod(m))
 
 
 # 3. Prebuilt key bundles
 def t_prebuilt():
-    from fl.keys.concrete_tfhe import list_prebuilt, load_prebuilt, prebuilt_dir
+    from ppflx.keys.concrete_tfhe import list_prebuilt, load_prebuilt, prebuilt_dir
 
     assert prebuilt_dir.exists(), f"prebuilt dir missing: {prebuilt_dir}"
     bundles = list_prebuilt()
@@ -61,7 +61,7 @@ def t_prebuilt():
         # Fresh clone — bundles are gitignored (private key material).
         # Directory presence is sufficient; skip load test.
         print(
-            f"  [skip] no prebuilt bundles in {prebuilt_dir} (run 'python -m fl.keys generate he_concrete_tfhe' to create)"
+            f"  [skip] no prebuilt bundles in {prebuilt_dir} (run 'python -m ppflx.keys generate he_concrete_tfhe' to create)"
         )
         return
     b = load_prebuilt(bundles[0])
@@ -73,7 +73,7 @@ check("prebuilt_bundles", t_prebuilt)
 
 # 4. Old concrete_tfhe_keys dir is gone
 def t_old_dir_gone():
-    from fl.keys.concrete_tfhe import prebuilt_dir
+    from ppflx.keys.concrete_tfhe import prebuilt_dir
 
     old = prebuilt_dir.parent.parent / "concrete_tfhe_keys"
     assert not old.exists(), f"old dir still exists: {old}"
@@ -84,7 +84,7 @@ check("old_dir_removed", t_old_dir_gone)
 
 # 5. CLI list
 def t_cli_list():
-    from fl.keys.cli import main
+    from ppflx.keys.cli import main
 
     buf = io.StringIO()
     with redirect_stdout(buf):
@@ -98,8 +98,8 @@ check("cli_list", t_cli_list)
 
 # 6. CLI prebuilt
 def t_cli_prebuilt():
-    from fl.keys.cli import main
-    from fl.keys.concrete_tfhe import list_prebuilt
+    from ppflx.keys.cli import main
+    from ppflx.keys.concrete_tfhe import list_prebuilt
 
     buf = io.StringIO()
     with redirect_stdout(buf):
@@ -118,7 +118,7 @@ check("cli_prebuilt", t_cli_prebuilt)
 
 # 7. make_tenseal_context alias
 def t_alias():
-    from fl.core.security import make_tenseal_context, context
+    from ppflx.core.security import make_tenseal_context, context
 
     assert make_tenseal_context is context
 
@@ -128,7 +128,7 @@ check("tenseal_alias", t_alias)
 
 # 8. DP generate + load roundtrip
 def t_dp_roundtrip():
-    from fl.keys.dp import generate, load
+    from ppflx.keys.dp import generate, load
 
     with tempfile.NamedTemporaryFile(suffix=".json", delete=False) as tf:
         tmp = tf.name
@@ -146,7 +146,7 @@ check("dp_roundtrip", t_dp_roundtrip)
 
 # 9. Overwrite protection
 def t_overwrite_protection():
-    from fl.keys.dp import generate
+    from ppflx.keys.dp import generate
 
     with tempfile.NamedTemporaryFile(suffix=".json", delete=False) as tf:
         tmp = tf.name
@@ -166,7 +166,7 @@ check("overwrite_protection", t_overwrite_protection)
 
 # 10. load() raises FileNotFoundError on missing file
 def t_missing_file():
-    from fl.keys.dp import load
+    from ppflx.keys.dp import load
 
     try:
         load("/nonexistent/dp_params.json")
@@ -178,7 +178,7 @@ def t_missing_file():
 check("missing_file_error", t_missing_file)
 
 
-# 11. Root create_*.py scripts are gone (logic lives in fl.keys)
+# 11. Root create_*.py scripts are gone (logic lives in ppflx.keys)
 def t_scripts_removed():
     for f in [
         "create_keys.py",
@@ -194,7 +194,7 @@ check("scripts_removed", t_scripts_removed)
 
 # 12. fl source tree sanity
 def t_tree():
-    keys_dir = Path("fl/keys")
+    keys_dir = Path("ppflx/keys")
     expected = {
         "__init__.py",
         "__main__.py",
@@ -216,8 +216,8 @@ check("tree_sanity", t_tree)
 # 13. Default key paths use the unified keys/<type>/ directory
 def t_default_paths():
     import inspect
-    from fl.keys import he_tenseal, dp, zkp
-    from fl.config import FLConfig
+    from ppflx.keys import he_tenseal, dp, zkp
+    from ppflx.config import FLConfig
 
     cfg = FLConfig()
     assert (

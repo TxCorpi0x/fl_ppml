@@ -52,7 +52,7 @@ Each mode addresses a distinct threat in the federated learning pipeline.
 | 11 | HE ElGamal + ZKP | `he_elgamal_zkp` | Exponential ElGamal (BabyJubJub) + ciphertext-bound Groth16 | Confidentiality + integrity: the upload is range-checked and its update against the encrypted global model is norm-bounded |
 | 12 | HE ElGamal + sampled ZKP | `he_elgamal_zkp_sampled` | As mode 11, proving only server-sampled committed coordinates (commit–challenge, two Flower rounds per round) | Confidentiality + probabilistic integrity: m out-of-bound coordinates detected with probability 1 − C(n−m, s)/C(n, s) ([docs/ZKP.md](docs/ZKP.md#64-he_elgamal_zkp_sampled)) |
 
-> **Integrity in modes 7–10.** Their ZKP proof covers a client-chosen plaintext vector and is not bound to the ciphertext the server aggregates, so a client can prove an honest vector and upload a poisoned one (`tests/test_zkp_binding_attack.py`). Only mode 11 binds proofs to the aggregated ciphertexts. Its remaining limitations — a bounded update can still be malicious (the bound caps per-round influence, not direction), a single-party trusted setup, a shared client key, and per-chunk update norms visible to the server — are listed in `fl/privacy/he_elgamal_zkp.py`.
+> **Integrity in modes 7–10.** Their ZKP proof covers a client-chosen plaintext vector and is not bound to the ciphertext the server aggregates, so a client can prove an honest vector and upload a poisoned one (`tests/test_zkp_binding_attack.py`). Only mode 11 binds proofs to the aggregated ciphertexts. Its remaining limitations — a bounded update can still be malicious (the bound caps per-round influence, not direction), a single-party trusted setup, a shared client key, and per-chunk update norms visible to the server — are listed in `ppflx/privacy/he_elgamal_zkp.py`.
 
 ### Triple Modes (9 & 10)
 
@@ -99,7 +99,7 @@ pip install -r requirements.txt
 
 ### One-Time Key and Parameter Generation
 python compare.py --dataset healthcare --simulation --dp --dp_params keys/dp/dp_params.json --benchmark
-Use the unified key/params CLI implemented in `fl.keys` instead of the removed top-level helper scripts.
+Use the unified key/params CLI implemented in `ppflx.keys` instead of the removed top-level helper scripts.
 
 ```bash
 cd fl_ppml
@@ -110,10 +110,10 @@ cd fl_ppml
 The helper script wraps the current compare runner; if you need to change container ports or datasets, inspect [scripts/run_docker_compare.sh](scripts/run_docker_compare.sh).
 # DP parameters — default ε=1.0, δ=1e-5 (example)
 # creates keys/dp/dp_params.json
-python -m fl.keys generate dp --output keys/dp/dp_params.json --epsilon 1.0 --delta 1e-5
+python -m ppflx.keys generate dp --output keys/dp/dp_params.json --epsilon 1.0 --delta 1e-5
 
 # ZKP params (example)
-python -m fl.keys generate zkp --output keys/zkp/zkp_params.json
+python -m ppflx.keys generate zkp --output keys/zkp/zkp_params.json
 ```
 
 ### gnark ZKP Service (required for ZKP modes)
@@ -170,14 +170,14 @@ python compare.py --dataset mnist --dirichlet-alpha 0.1 --simulation
 python compare.py --dataset cifar --dirichlet-alpha 0.5 --simulation
 ```
 
-### Single runs (`python -m fl.launch`)
+### Single runs (`python -m ppflx_bench.launch`)
 
-Runs use Flower 1.36 (Python 3.12). `fl.launch` starts a local SuperLink and one SuperNode per client, submits the Flower App declared in [pyproject.toml](pyproject.toml) with `flwr run`, waits for it and stops every process. The ServerApp is `fl.server:server_app`, the ClientApp `fl.client:client_app`; every run config key in `[tool.flwr.app.config]` is also a flag.
+Runs use Flower 1.36 (Python 3.12). `ppflx_bench.launch` starts a local SuperLink and one SuperNode per client, submits the Flower App declared in [pyproject.toml](pyproject.toml) with `flwr run`, waits for it and stops every process. The ServerApp is `ppflx.server:server_app`, the ClientApp `ppflx.client:client_app`; every run config key in `[tool.flwr.app.config]` is also a flag.
 
 ```bash
-python -m fl.launch --mode baseline --dataset healthcare --data-path ./dataset/ --num-clients 3 --num-rounds 3
-python -m fl.launch --mode he_tenseal --data-path ./dataset/ --num-rounds 2 --results-dir results/he_single/
-python -m fl.launch --mode dp --simulation --data-path ./dataset/ --num-rounds 2
+python -m ppflx_bench.launch --mode baseline --dataset healthcare --data-path ./dataset/ --num-clients 3 --num-rounds 3
+python -m ppflx_bench.launch --mode he_tenseal --data-path ./dataset/ --num-rounds 2 --results-dir results/he_single/
+python -m ppflx_bench.launch --mode dp --simulation --data-path ./dataset/ --num-rounds 2
 ```
 
 `--simulation` uses Flower's Simulation Runtime instead of SuperNode processes; HE modes then transport plaintext and their results are marked `[SIM]`. Logs go to the results directory: `server.log` (SuperLink), `serverapp.log` (ServerApp), `client_<i>.log` (SuperNode and its ClientApp processes). ZKP modes need the proof service, which `compare.py` starts for you.
@@ -296,7 +296,7 @@ Every run records a per-round audit trail. Two backends:
 | Backend | Description |
 |---------|-------------|
 | `mock` (default) | Writes JSON ledger files locally — zero external dependencies |
-| `web3` | Submits transactions to a live EVM node (set `chain_rpc_url` in `fl/config.py`) |
+| `web3` | Submits transactions to a live EVM node (set `chain_rpc_url` in `ppflx/config.py`) |
 | `none` | Disables the ledger entirely |
 
 ```bash
@@ -387,14 +387,14 @@ results/
 fl_ppml/
 ├── compare.py                  ← main CLI: all 10 modes, sweeps, blockchain
 ├── pyproject.toml              ← Flower App: ServerApp/ClientApp components and run config
-├── (key generation moved)      ← use `python -m fl.keys generate ...` to create HE/DP/ZKP params
+├── (key generation moved)      ← use `python -m ppflx.keys generate ...` to create HE/DP/ZKP params
 ├── requirements.txt
 ├── scripts/
 │   ├── aggregate_results.py    ← Docker-run result aggregation
 │   ├── aggregate_statistics.py ← multi-run mean ± std across seeds
 │   └── run_repeated_experiments.sh ← loop: N runs per seed → aggregate
-├── fl/                         ← core FL engine
-│   ├── launch.py               ← SuperLink/SuperNode launcher (python -m fl.launch)
+├── ppflx/                         ← core FL engine
+│   ├── launch.py               ← SuperLink/SuperNode launcher (python -m ppflx_bench.launch)
 │   ├── server.py               ← ServerApp + FedPrivate strategy (Message API)
 │   ├── client.py               ← ClientApp + FlowerClient
 │   ├── runner.py               ← run_mode() entry point
@@ -432,9 +432,9 @@ This checkout includes the guides index at [docs/README.md](docs/README.md) plus
 |------|---------|
 | [docs/README.md](docs/README.md) | Guides index for FL, DP, FHE, ZKP, and blockchain topics |
 | [compare.py](compare.py) | Main comparison CLI for the 10 privacy modes |
-| [fl/launch.py](fl/launch.py) | Single runs on a local SuperLink and SuperNodes (`python -m fl.launch`) |
-| [fl/compare/registry.py](fl/compare/registry.py) | Dataset and mode registry, prerequisites, defaults |
-| [fl/keys/cli.py](fl/keys/cli.py) | Key / parameter generation CLI (`python -m fl.keys ...`) |
+| [ppflx_bench/launch.py](ppflx_bench/launch.py) | Single runs on a local SuperLink and SuperNodes (`python -m ppflx_bench.launch`) |
+| [ppflx_bench/compare/registry.py](ppflx_bench/compare/registry.py) | Dataset and mode registry, prerequisites, defaults |
+| [ppflx/keys/cli.py](ppflx/keys/cli.py) | Key / parameter generation CLI (`python -m ppflx.keys ...`) |
 | [scripts/aggregate_statistics.py](scripts/aggregate_statistics.py) | Mean ± std aggregation over repeated runs |
 | [scripts/run_repeated_experiments.sh](scripts/run_repeated_experiments.sh) | Convenience loop for repeated runs |
 | [zkp_gnark_service/main.go](zkp_gnark_service/main.go) | gnark prove/verify HTTP service |
@@ -472,7 +472,7 @@ All tuning is via environment variables — no code changes required. Variables 
 | `FL_ZKP_SAMPLE_PCT` | `0.1` | Sampled modes: fraction of model coordinates proven per client per round, in (0, 1]. Set on the server; the per-round seed is drawn by the server after clients commit and recorded in `round_outcomes` |
 | `FL_ZKP_PARALLELISM` | `1` | Proofs generated concurrently per client (each proof uses several cores inside the prover service) |
 | `FL_ZKP_SCALE` | `1000000` | Float→int64 scale for the proof circuit |
-| `FL_ZKP_MAX_NORM` | calibrated per dataset | Overrides the server's **update**-norm bound B on ‖w_local − w_global‖₂ (not a weight norm). Default: `PER_STEP_UPDATE_NORM[dataset] × local_epochs × max_client_batches` in `fl/core/update_bound.py` (the server computes the batch count from the same partition clients use), calibrated with `scripts/calibrate_update_norm.py`. Clients clip their update to B before proving. DP runs need their own calibration (DP noise enlarges honest updates); the DP clipping norm is a per-step gradient clip and is not a valid value |
+| `FL_ZKP_MAX_NORM` | calibrated per dataset | Overrides the server's **update**-norm bound B on ‖w_local − w_global‖₂ (not a weight norm). Default: `PER_STEP_UPDATE_NORM[dataset] × local_epochs × max_client_batches` in `ppflx/core/update_bound.py` (the server computes the batch count from the same partition clients use), calibrated with `scripts/calibrate_update_norm.py`. Clients clip their update to B before proving. DP runs need their own calibration (DP noise enlarges honest updates); the DP clipping norm is a per-step gradient clip and is not a valid value |
 | `FL_ZKP_TIMEOUT` | `600` | Fallback HTTP timeout (seconds) for the proof services; `FL_ZKP_PROVE_TIMEOUT` (default 1800) and `FL_ZKP_VERIFY_TIMEOUT` / `FL_ZKP_VERIFY_LIGHT_TIMEOUT` (default 900) take precedence |
 
 **Failure handling.** Security-relevant paths fail closed:
@@ -523,12 +523,12 @@ All tuning is via environment variables — no code changes required. Variables 
 | TenSEAL `scale out of bounds` | CKKS coefficient overflow | Already fixed; ensure `global_scale=2^40` |
 | TFHE accuracy 2–3% lower | int8 quantization error | Expected trade-off |
 | DP accuracy unchanged during `--epsilon-sweep` | Sentinel `dp_epsilon=10.0` used | Pass `--dp-epsilon` or use `--epsilon-sweep` |
-| DP accuracy drops significantly | ε too small (strong noise) | Increase ε when generating DP params, e.g. `python -m fl.keys generate dp --epsilon 1.0` |
-| `FileNotFoundError: keys/he_tenseal/secret_context.bin` | HE keys not generated | `python -m fl.keys generate he_tenseal` |
-| TenSEAL `RuntimeError: incompatible version` | key files written by another TenSEAL version | `python -m fl.keys generate he_tenseal --overwrite` |
-| TFHE rounds end `no_results`, `ClientApp stopped responding`; client log shows an LLVM `Assertion failed` | `fl/keys/prebuilt/` bundles compiled by another Concrete version abort the ClientApp natively | move the bundles out of `fl/keys/prebuilt/`; fresh ones are generated on the next run |
-| `FileNotFoundError: keys/dp/dp_params.json` | DP params not generated | `python -m fl.keys generate dp --output keys/dp/dp_params.json` |
-| `port 1909x is in use` from `fl.launch` | a SuperLink or SuperNode from an interrupted run is still running | stop it (`lsof -ti tcp:19093`), or wait for the other run to finish; runs use fixed ports |
+| DP accuracy drops significantly | ε too small (strong noise) | Increase ε when generating DP params, e.g. `python -m ppflx.keys generate dp --epsilon 1.0` |
+| `FileNotFoundError: keys/he_tenseal/secret_context.bin` | HE keys not generated | `python -m ppflx.keys generate he_tenseal` |
+| TenSEAL `RuntimeError: incompatible version` | key files written by another TenSEAL version | `python -m ppflx.keys generate he_tenseal --overwrite` |
+| TFHE rounds end `no_results`, `ClientApp stopped responding`; client log shows an LLVM `Assertion failed` | `ppflx/keys/prebuilt/` bundles compiled by another Concrete version abort the ClientApp natively | move the bundles out of `ppflx/keys/prebuilt/`; fresh ones are generated on the next run |
+| `FileNotFoundError: keys/dp/dp_params.json` | DP params not generated | `python -m ppflx.keys generate dp --output keys/dp/dp_params.json` |
+| `port 1909x is in use` from `ppflx_bench.launch` | a SuperLink or SuperNode from an interrupted run is still running | stop it (`lsof -ti tcp:19093`), or wait for the other run to finish; runs use fixed ports |
 | Blockchain table shows all zeros | Stale ledger from pre-fix run | Re-run; parser unwraps `{"ledger": [...]}` format correctly |
 | `ledger_comparison.json` missing | `--chain-backend none` was set | Re-run without `--chain-backend none` |
 | `he_tenseal_zkp_dp` not found | Missing from mode list | Fixed: all 10 modes in `compare.py` default |

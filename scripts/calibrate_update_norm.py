@@ -1,4 +1,4 @@
-"""Calibrate the ZKP update-norm bound per local step (fl/core/update_bound.py).
+"""Calibrate the ZKP update-norm bound per local step (ppflx/core/update_bound.py).
 
 Runs plain FedAvg with the harness's training settings (SGD, momentum 0.9,
 dataset batch size, config learning rate) and one local epoch per round, for
@@ -14,7 +14,7 @@ Why several client counts and initial models:
   - the per-step norm is not constant: updates grow sublinearly with steps, so
     configurations with fewer steps per epoch have larger per-step norms;
   - the first update's size depends on the initial model. The data partition
-    uses --seed (the harness default, 42); fl.server.make_strategy seeds the
+    uses --seed (the harness default, 42); ppflx.server.make_strategy seeds the
     initial model with the run's seed, which a deployment may change.
 
 Data is read from --data-path (the repository's dataset/ directory by
@@ -30,11 +30,11 @@ import time
 import numpy as np
 import torch
 
-from fl.compare.registry import DATASETS
-from fl.config import FLConfig
-from fl.core.update_bound import KAPPA
-from fl.datasets import get_dataset_loader
-from fl.models.registry import get_model_for_batch
+from ppflx_bench.compare.registry import DATASETS
+from ppflx.config import FLConfig
+from ppflx.core.update_bound import KAPPA
+from ppflx_bench.datasets import get_dataset_loader
+from ppflx.models.registry import get_model_for_batch
 
 
 def flat(net):
@@ -72,7 +72,7 @@ def load(dataset, num_clients, seed, data_path):
 
 
 def run(config, trainloaders, testloader, rounds, init_seed):
-    torch.manual_seed(init_seed)  # as fl.server.make_strategy does with the run's seed
+    torch.manual_seed(init_seed)  # as ppflx.server.make_strategy does with the run's seed
     global_net = get_model_for_batch(next(iter(testloader)), config.num_classes)
 
     per_step, norms = [], []

@@ -13,7 +13,7 @@ import pytest
 import torch
 from flwr.common import Code, FitRes, Status, ndarrays_to_parameters, parameters_to_ndarrays
 
-import fl.core.zkp_gnark as zkp_gnark
+import ppflx.core.zkp_gnark as zkp_gnark
 from tests.conftest import break_gnark, requires_gnark, use_gnark
 
 DEAD = "http://127.0.0.1:1"
@@ -58,7 +58,7 @@ def live(monkeypatch, gnark):
 
 def _client_context(server):
     """A client that downloaded the server's global model and bound."""
-    from fl.privacy.zkp import ZKPMode
+    from ppflx.privacy.zkp import ZKPMode
 
     client, ctx = ZKPMode(), {"backend": "gnark"}
     client.on_fit_config(ctx, {"server_round": 1, **server.fit_config(1)})
@@ -73,7 +73,7 @@ def _upload(weights=HONEST):
 
 
 def _zkp_server():
-    from fl.privacy.zkp import ZKPMode
+    from ppflx.privacy.zkp import ZKPMode
 
     mode = ZKPMode()
     mode.setup_server_context(_config())
@@ -82,7 +82,7 @@ def _zkp_server():
 
 
 def _composite_server():
-    from fl.privacy.he_zkp import HeTensealZKPMode
+    from ppflx.privacy.he_zkp import HeTensealZKPMode
 
     mode = HeTensealZKPMode()
     mode._zkp_mode.setup_server_context(_config())  # the HE context needs keys these tests don't use
@@ -101,7 +101,7 @@ def test_client_proof_generation_failure_raises(monkeypatch):
 
 
 def test_client_refuses_to_prove_without_global_model_or_bound():
-    from fl.privacy.zkp import ZKPMode
+    from ppflx.privacy.zkp import ZKPMode
 
     with pytest.raises(RuntimeError, match="no global model"):
         ZKPMode().send_parameters(TinyModel(HONEST), {"backend": "gnark", "max_update_norm": 1.0}, sim_mode=False)
@@ -110,7 +110,7 @@ def test_client_refuses_to_prove_without_global_model_or_bound():
 
 
 def test_pedersen_stub_is_refused_unless_explicitly_allowed(monkeypatch):
-    from fl.privacy.zkp import resolve_backend
+    from ppflx.privacy.zkp import resolve_backend
 
     with pytest.raises(RuntimeError, match="no verification"):
         resolve_backend(_config(zkp_backend="pedersen"))
@@ -280,8 +280,8 @@ class _Mode:
 
 
 def _strategy(mode, chain, ledger_path=None):
-    from fl.core.benchmark import BenchmarkMetrics
-    from fl.server import FedPrivate
+    from ppflx.core.benchmark import BenchmarkMetrics
+    from ppflx.server import FedPrivate
 
     s = FedPrivate.__new__(FedPrivate)
     s.mode, s.chain, s.server_context = mode, chain, None
@@ -341,7 +341,7 @@ class _Grid:
 
 
 def _sampling_strategy():
-    from fl.server import FedPrivate
+    from ppflx.server import FedPrivate
 
     s = FedPrivate.__new__(FedPrivate)
     s.fraction_fit = s.fraction_evaluate = 1.0
@@ -391,7 +391,7 @@ def test_ledger_save_failure_raises(tmp_path):
 
 
 def test_tenseal_server_without_public_key_refuses_real_mode():
-    from fl.privacy.he_tenseal import HeTensealMode
+    from ppflx.privacy.he_tenseal import HeTensealMode
 
     missing = "/nonexistent/public_context.bin"
     with pytest.raises(FileNotFoundError):
@@ -400,15 +400,15 @@ def test_tenseal_server_without_public_key_refuses_real_mode():
 
 
 def test_tenseal_aggregation_without_context_raises():
-    from fl.privacy.he_tenseal import HeTensealMode
+    from ppflx.privacy.he_tenseal import HeTensealMode
 
     with pytest.raises(RuntimeError, match="no server context"):
         HeTensealMode().aggregate_fit_override(1, [], [], None, NS(sim_mode=False))
 
 
 def test_tenseal_decryption_failure_raises():
-    from fl.core.security import make_tenseal_context
-    from fl.privacy.he_tenseal import HeTensealMode
+    from ppflx.core.security import make_tenseal_context
+    from ppflx.privacy.he_tenseal import HeTensealMode
 
     garbage = [np.frombuffer(b"not a ciphertext", dtype=np.uint8)] * 2
     with pytest.raises(Exception):
@@ -416,7 +416,7 @@ def test_tenseal_decryption_failure_raises():
 
 
 def test_undecodable_uint8_payload_is_never_averaged():
-    from fl.privacy.he_tenseal import _decompress_cte2_results
+    from ppflx.privacy.he_tenseal import _decompress_cte2_results
 
     results = [(NS(cid="c"), _fit([np.frombuffer(b"\x00\x01garbage", dtype=np.uint8)], {}))]
     with pytest.raises(ValueError, match="not a decodable"):
@@ -424,7 +424,7 @@ def test_undecodable_uint8_payload_is_never_averaged():
 
 
 def test_tfhe_aggregation_without_context_or_on_error_raises():
-    from fl.privacy.he_concrete_tfhe import HeConcreteThfeMode
+    from ppflx.privacy.he_concrete_tfhe import HeConcreteThfeMode
 
     with pytest.raises(RuntimeError, match="no server context"):
         HeConcreteThfeMode().aggregate_fit_override(1, [], [], None, NS(sim_mode=False))
@@ -434,7 +434,7 @@ def test_tfhe_aggregation_without_context_or_on_error_raises():
 
 
 def test_dp_without_params_file_requires_explicit_epsilon():
-    from fl.privacy.dp import DifferentialPrivacyMode
+    from ppflx.privacy.dp import DifferentialPrivacyMode
 
     base = dict(dp_params_path="/nonexistent/dp.pkl", dp_delta=1e-5, dp_max_grad_norm=1.0, dp_noise_multiplier=0.1)
     with pytest.raises(FileNotFoundError):
@@ -448,8 +448,8 @@ def test_dp_without_params_file_requires_explicit_epsilon():
 
 
 def test_skipped_modes_are_reported_and_fail_the_run(tmp_path, monkeypatch):
-    import fl.compare.runner as runner
-    from fl.compare.registry import MODES
+    import ppflx_bench.compare.runner as runner
+    from ppflx_bench.compare.registry import MODES
 
     monkeypatch.setattr(MODES["dp"], "check_prerequisites", lambda: "Missing prerequisite: keys/dp/dp_params.json")
     monkeypatch.setattr(MODES["baseline"], "check_prerequisites", lambda: None)
@@ -472,7 +472,7 @@ def test_skipped_modes_are_reported_and_fail_the_run(tmp_path, monkeypatch):
 
 
 def test_failed_results_never_replace_stored_dataset_entries(tmp_path):
-    from fl.compare.runner import _merge_into_dataset_report
+    from ppflx_bench.compare.runner import _merge_into_dataset_report
 
     stored = [{"mode": "zkp", "success": True, "benchmark": {"rounds": 20}}]
     (tmp_path / "healthcare").mkdir()
@@ -487,7 +487,7 @@ def test_harness_stops_a_run_that_outlives_its_clients():
     """A stuck run is stopped after the grace period, not after hours."""
     import time
 
-    from fl.launch import wait_for_run
+    from ppflx_bench.launch import wait_for_run
 
     stopped = []
     t0 = time.monotonic()
@@ -503,8 +503,8 @@ def test_harness_stops_a_run_that_outlives_its_clients():
 
 
 def test_zkp_mode_is_not_run_without_a_healthy_proof_service(tmp_path, monkeypatch):
-    import fl.compare.experiment as experiment
-    from fl.compare.registry import MODES
+    import ppflx_bench.compare.experiment as experiment
+    from ppflx_bench.compare.registry import MODES
 
     monkeypatch.setattr(experiment, "_ensure_gnark_service", lambda log_dir: False)
     monkeypatch.setattr(experiment, "run_distributed", lambda *a, **k: pytest.fail("mode ran without a proof service"))

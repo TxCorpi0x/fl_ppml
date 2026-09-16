@@ -12,8 +12,8 @@ import pytest
 import torch
 from flwr.common import Code, FitRes, Status, ndarrays_to_parameters, parameters_to_ndarrays
 
-from fl.core.sampling import sample_indices, sample_size
-from fl.privacy.zkp_sampled import ZKPSampledMode
+from ppflx.core.sampling import sample_indices, sample_size
+from ppflx.privacy.zkp_sampled import ZKPSampledMode
 from tests.conftest import requires_gnark, use_gnark
 
 pytestmark = requires_gnark

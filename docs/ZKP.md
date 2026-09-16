@@ -86,7 +86,7 @@ B = PER_STEP_UPDATE_NORM[dataset] × local_epochs × max_client_batches
 - `PER_STEP_UPDATE_NORM` is calibrated per dataset with `scripts/calibrate_update_norm.py`: plain FedAvg with the harness's training settings, for several client counts and several initial models, recording ‖Δ‖ / steps for every client and round. The table stores KAPPA = 1.5 times the maximum.
 - `FL_ZKP_MAX_NORM` overrides the table with an explicit update norm for one run.
 
-Why steps and initial models: an honest update grows with the number of optimiser steps (fewer clients → larger shards → more steps per epoch), and the first rounds' updates depend strongly on the initial model. `fl.server.make_strategy` seeds the initial model with the run's seed so runs are reproducible.
+Why steps and initial models: an honest update grows with the number of optimiser steps (fewer clients → larger shards → more steps per epoch), and the first rounds' updates depend strongly on the initial model. `ppflx.server.make_strategy` seeds the initial model with the run's seed so runs are reproducible.
 
 **Calibrated values** (client counts 2, 3, 5; initial-model seeds 0, 1, 2, 3, 42; 3 rounds; partition seed 42; one local epoch; harness batch sizes; learning rate 0.001):
 
@@ -106,8 +106,8 @@ Datasets without an entry (including the legacy `cifar` key) make ZKP modes refu
 
 Honest clients clip before proving, so a correct client is never rejected by the bound:
 
-- `zkp`, `zkp_sampled` (`fl/privacy/zkp.py::clip_update_in_place`): Δ is scaled to 0.999·B, and the exact integer statement the server will check is tested before proving, shrinking further if rounding would push it over. The clipped weights are what the client uploads.
-- `he_elgamal_zkp`, `he_elgamal_zkp_sampled` (`fl/core/elgamal_gnark.py::quantize_update`): the quantized values are rounded around the global model, so the clipped update always fits the circuit's slack.
+- `zkp`, `zkp_sampled` (`ppflx/privacy/zkp.py::clip_update_in_place`): Δ is scaled to 0.999·B, and the exact integer statement the server will check is tested before proving, shrinking further if rounding would push it over. The clipped weights are what the client uploads.
+- `he_elgamal_zkp`, `he_elgamal_zkp_sampled` (`ppflx/core/elgamal_gnark.py::quantize_update`): the quantized values are rounded around the global model, so the clipped update always fits the circuit's slack.
 
 Each client reports `zkp_update_norm` (before clipping) and `zkp_update_clipped`; the server records them per round.
 
@@ -219,7 +219,7 @@ Commit–challenge as in [6.2](#62-zkp_sampled), over ElGamal:
 - **Commit:** clients clip, quantize and encrypt every coordinate, keeping the values, the encryption randomness and the global model they measured against. They upload ciphertexts only.
 - **Challenge:** after the seed, clients prove each chunk of sampled coordinates with `/elgamal/prove_with`, using the stored randomness, so the proof only verifies against the committed ciphertexts. The server verifies against the commitments and the global aggregate it held at commit time.
 
-A coordinate that makes the bound impossible, or whose committed ciphertext differs from what the client later proves, is detected if sampled. With m such coordinates out of n and s sampled, the detection probability is 1 − C(n−m, s)/C(n, s) ≥ 1 − (1 − s/n)^m (`fl.core.sampling.detection_probability`). Unsampled coordinates carry no proof. An out-of-range unsampled ciphertext makes aggregate decryption fail for every client: a denial of service that is only detected after aggregation.
+A coordinate that makes the bound impossible, or whose committed ciphertext differs from what the client later proves, is detected if sampled. With m such coordinates out of n and s sampled, the detection probability is 1 − C(n−m, s)/C(n, s) ≥ 1 − (1 − s/n)^m (`ppflx.core.sampling.detection_probability`). Unsampled coordinates carry no proof. An out-of-range unsampled ciphertext makes aggregate decryption fail for every client: a denial of service that is only detected after aggregation.
 
 ### 6.5 CKKS/TFHE composites
 
@@ -282,7 +282,7 @@ zkp_gnark_service/gnark_service serve --role verifier --keys-dir zkp_gnark_servi
 zkp_gnark_service/gnark_service elgamal-keygen keys/he_elgamal/secret_key.json keys/he_elgamal/public_key.json
 ```
 
-`compare.py` starts both roles automatically. `python -m fl.keys generate he_elgamal` wraps `elgamal-keygen`.
+`compare.py` starts both roles automatically. `python -m ppflx.keys generate he_elgamal` wraps `elgamal-keygen`.
 
 ### 8.2 Endpoints
 
@@ -330,7 +330,7 @@ Integers are little-endian int64, base64-encoded. Field integers (`bound_sq`, `c
 
 ## 9. Python API
 
-**`fl.core.zkp_gnark`** (norm circuit)
+**`ppflx.core.zkp_gnark`** (norm circuit)
 - `generate_gnark_proofs(state_dict, layers=None, service_url=None, scale=None, total_bound_sq=None, timeout=None) -> (proofs, proof_bytes)`: integer arrays are proven as given; float arrays are quantized. Each proof declares its own energy as its bound; with `total_bound_sq`, their sum must fit.
 - `verify_gnark_proofs(parameters, layer_names, proofs) -> (ok, failures)`: recomputes each hash from `parameters`.
 - `verify_gnark_proofs_light(proofs) -> (ok, failures)`: verifies against the proofs' own hashes (not bound to anything the caller holds).
@@ -338,7 +338,7 @@ Integers are little-endian int64, base64-encoded. Field integers (`bound_sq`, `c
 - `policy_bound_sq(max_update_norm, n, scale=None)`, `quantize(values)`, `energy(q)`, `expected_proof_layout(schema)`
 - `GnarkServiceError`: raised for infrastructure failures, never for client faults.
 
-**`fl.core.elgamal_gnark`** (ElGamal circuit)
+**`ppflx.core.elgamal_gnark`** (ElGamal circuit)
 - `GlobalModel.initial(arrays, scale)`, `GlobalModel.aggregate(weight, layers, sums=None)`, `GlobalModel.request(indices, prover=...)`
 - `quantize_update(glob, local_flat, max_update_norm, scale) -> (q, norm, clipped)`
 - `total_bound_sq(max_update_norm, scale, weight, n)`, `update_energy(q, sums, weight)`
@@ -346,13 +346,13 @@ Integers are little-endian int64, base64-encoded. Field integers (`bound_sq`, `c
 - `Policy.from_env()`, `chunks_for(schema, chunk_size)`, `chunk_indices(schema, chunk)`, `context_value(round, chunk)`
 - `ElGamalServiceError` (infrastructure), `ElGamalRejected` (the service refused the contents)
 
-**`fl.core.update_bound`**: `max_update_norm(config)`, `bound_from_fit_config(fit_config)`, `clip_update(global, local, bound, fits)`, `split_bound(energies, total)`, `PER_STEP_UPDATE_NORM`, `KAPPA`.
+**`ppflx.core.update_bound`**: `max_update_norm(config)`, `bound_from_fit_config(fit_config)`, `clip_update(global, local, bound, fits)`, `split_bound(energies, total)`, `PER_STEP_UPDATE_NORM`, `KAPPA`.
 
-**`fl.core.gnark_keys`**: `load_manifest()`, `manifest_sha256()`, `circuit_size(circuit)`, `pinned_vk_sha256(circuit)`, `missing_proving_keys()`.
+**`ppflx.core.gnark_keys`**: `load_manifest()`, `manifest_sha256()`, `circuit_size(circuit)`, `pinned_vk_sha256(circuit)`, `missing_proving_keys()`.
 
-**`fl.core.sampling`**: `sample_rate_from_env()`, `sample_size(n, rate)`, `new_round_seed()`, `sample_indices(seed_hex, n, s)`, `detection_probability(n, s, m)`.
+**`ppflx.core.sampling`**: `sample_rate_from_env()`, `sample_size(n, rate)`, `new_round_seed()`, `sample_indices(seed_hex, n, s)`, `detection_probability(n, s, m)`.
 
-**Modes** (`fl.privacy`): `ZKPMode`, `ZKPSampledMode`, `HeElGamalZKPMode`, `HeElGamalZKPSampledMode`; the commit–challenge protocol is `fl.privacy.commit_challenge.CommitChallengeMixin`.
+**Modes** (`ppflx.privacy`): `ZKPMode`, `ZKPSampledMode`, `HeElGamalZKPMode`, `HeElGamalZKPSampledMode`; the commit–challenge protocol is `ppflx.privacy.commit_challenge.CommitChallengeMixin`.
 
 ---
 
@@ -375,7 +375,7 @@ Each run's `benchmark.json` records:
 
 `compare.py` validates ZKP runs: a run with rejected clients, aborted rounds, Flower failures or missing outcomes is reported as failed.
 
-The audit ledger (`fl/chain.py`) writes a `ModelCommit` for every round that updated the model and a `ProofAnchor` with SHA-256 hashes of the admitted proof payloads. Payloads include the verifying-key hash and declared bounds, so an anchored proof can be re-verified with the committed verifying key. Nothing is written for rounds that did not update the model.
+The audit ledger (`ppflx/chain.py`) writes a `ModelCommit` for every round that updated the model and a `ProofAnchor` with SHA-256 hashes of the admitted proof payloads. Payloads include the verifying-key hash and declared bounds, so an anchored proof can be re-verified with the committed verifying key. Nothing is written for rounds that did not update the model.
 
 ---
 

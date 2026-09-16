@@ -1,6 +1,6 @@
-"""Tests for fl.compare.validation (ZKP run self-certification)."""
+"""Tests for ppflx_bench.compare.validation (ZKP run self-certification)."""
 
-from fl.compare.validation import sampled_coverage_warning, validate_zkp_ledger
+from ppflx_bench.compare.validation import sampled_coverage_warning, validate_zkp_ledger
 
 
 def _round(rnd, clients=3, proofs_per_client=7, anchored=None):
@@ -96,7 +96,7 @@ def _outcomes(rounds=3, **override):
 
 
 def test_run_with_recorded_outcomes_passes_without_verification_warning():
-    from fl.compare.validation import VERIFICATION_NOT_RECORDED, validate_run
+    from ppflx_bench.compare.validation import VERIFICATION_NOT_RECORDED, validate_run
 
     report = validate_run(_ledger(), _outcomes(), expected_rounds=3)
     assert report["ok"], report["errors"]
@@ -104,14 +104,14 @@ def test_run_with_recorded_outcomes_passes_without_verification_warning():
 
 
 def test_run_without_recorded_outcomes_keeps_ledger_only_warning():
-    from fl.compare.validation import VERIFICATION_NOT_RECORDED, validate_run
+    from ppflx_bench.compare.validation import VERIFICATION_NOT_RECORDED, validate_run
 
     report = validate_run(_ledger(), None, expected_rounds=3)
     assert report["ok"] and VERIFICATION_NOT_RECORDED in report["warnings"]
 
 
 def test_aborted_rejected_or_failed_rounds_invalidate_the_run():
-    from fl.compare.validation import validate_run
+    from ppflx_bench.compare.validation import validate_run
 
     cases = {
         "no_quorum": _outcomes(r2={"outcome": "no_quorum"}),

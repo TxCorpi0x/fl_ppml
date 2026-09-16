@@ -1,0 +1,69 @@
+"""
+ppflx.keys.zkp — Zero-Knowledge Proof parameter generation and loading.
+
+Key material:
+    zkp_params.json  — Pedersen commitment group parameters (prime p, generator g/h)
+
+Usage::
+
+    from ppflx.keys.zkp import generate, load
+
+    generate(output="keys/zkp/zkp_params.json", bit_length=2048)
+    ctx = load("keys/zkp/zkp_params.json")
+"""
+
+from __future__ import annotations
+
+import os
+
+
+# ── Public API ────────────────────────────────────────────────────────────────
+
+
+def generate(
+    output: str = "keys/zkp/zkp_params.json",
+    bit_length: int = 2048,
+    overwrite: bool = False,
+) -> "ZKPContext":  # noqa: F821
+    """
+    Generate Pedersen commitment parameters and save to *output*.
+
+    Args:
+        output:     Destination path for the JSON file.
+        bit_length: Security parameter in bits (default 2048; use 4096 for
+                    higher security at the cost of speed).
+        overwrite:  Raise if file exists and this is False.
+
+    Returns:
+        The generated :class:`~ppflx.core.zkp.ZKPContext`.
+    """
+    from ppflx.core.zkp import create_zkp_context, write_zkp_params
+
+    if os.path.exists(output) and not overwrite:
+        raise FileExistsError(
+            f"{output} already exists. Pass overwrite=True to regenerate."
+        )
+
+    os.makedirs(os.path.dirname(os.path.abspath(output)), exist_ok=True)
+
+    print(
+        f"[zkp] Generating {bit_length}-bit Pedersen parameters … (may take a moment)"
+    )
+    ctx = create_zkp_context(bit_length=bit_length)
+    write_zkp_params(output, ctx)
+
+    print(f"[zkp] Prime modulus p: {bit_length} bits")
+    print(f"[OK] ZKP parameters saved → {output}")
+    return ctx
+
+
+def load(path: str = "zkp_params.json") -> "ZKPContext":  # noqa: F821
+    """Load and return a :class:`~ppflx.core.zkp.ZKPContext`."""
+    from ppflx.core.zkp import read_zkp_params
+
+    if not os.path.exists(path):
+        raise FileNotFoundError(
+            f"ZKP params file not found: {path}\n"
+            f"Run: python -m ppflx.keys generate zkp"
+        )
+    return read_zkp_params(path)

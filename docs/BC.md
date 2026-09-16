@@ -768,21 +768,21 @@ This section describes what is actually built in `fl_ppml/fl/` — moving from t
 
 | File | Role |
 |------|------|
-| `fl/chain.py` | Chain backend factory + `MockChain` + `Web3Chain` |
-| `fl/chain_contract/FLLedger.sol` | On-chain audit ledger smart contract |
-| `fl/config.py` | `FLConfig` — four new chain fields |
-| `fl/server.py` | Writes chain events after every aggregation round |
-| `fl/privacy/zkp.py` | Populates `_last_anchor_data` for ZKP-only modes |
-| `fl/privacy/he_zkp.py` | Populates `_last_anchor_data` for HE+ZKP composite modes |
+| `ppflx/chain.py` | Chain backend factory + `MockChain` + `Web3Chain` |
+| `ppflx/chain_contract/FLLedger.sol` | On-chain audit ledger smart contract |
+| `ppflx/config.py` | `FLConfig` — four new chain fields |
+| `ppflx/server.py` | Writes chain events after every aggregation round |
+| `ppflx/privacy/zkp.py` | Populates `_last_anchor_data` for ZKP-only modes |
+| `ppflx/privacy/he_zkp.py` | Populates `_last_anchor_data` for HE+ZKP composite modes |
 | `compare.py` | `--chain-backend` / `--chain-ledger-dir` CLI flags |
-| `fl/compare/runner.py` | Per-mode ledger paths; merges ledgers; prints audit table |
+| `ppflx_bench/compare/runner.py` | Per-mode ledger paths; merges ledgers; prints audit table |
 
 ---
 
-### `fl/chain.py` — Backend Factory
+### `ppflx/chain.py` — Backend Factory
 
 ```python
-from fl.chain import get_chain
+from ppflx.chain import get_chain
 
 chain = get_chain(config)   # reads config.chain_backend
 ```
@@ -799,7 +799,7 @@ Three backends:
 
 ---
 
-### `fl/chain_contract/FLLedger.sol` — Smart Contract
+### `ppflx/chain_contract/FLLedger.sol` — Smart Contract
 
 The Solidity contract exposes two entry points:
 
@@ -823,7 +823,7 @@ Emitted events are indexed by `round` for efficient on-chain querying and provid
 
 ---
 
-### `fl/config.py` — New Chain Fields
+### `ppflx/config.py` — New Chain Fields
 
 ```python
 @dataclass
@@ -866,7 +866,7 @@ python compare.py --dataset healthcare --chain-backend none
 python compare.py --dataset healthcare --chain-ledger-dir /tmp/my_ledgers
 
 ## Single runs take the same options as run config keys
-python -m fl.launch --mode zkp --num-rounds 3 \
+python -m ppflx_bench.launch --mode zkp --num-rounds 3 \
   --chain-backend mock --chain-ledger-path /tmp/zkp_ledger.json
 ```
 
@@ -941,7 +941,7 @@ To use an actual blockchain instead of the mock JSON ledger:
 
 1. Deploy `FLLedger.sol` to a network (Ganache, Hardhat, Sepolia, etc.)
 2. Note the deployed contract address
-3. Update `fl/config.py` (or pass via CLI):
+3. Update `ppflx/config.py` (or pass via CLI):
    ```python
    chain_backend = "web3"
    chain_rpc_url = "http://127.0.0.1:8545"   # or Infura / Alchemy endpoint

@@ -2,7 +2,7 @@
 Tests for sweep experiments.
 
 Covers:
-  1. DP epsilon override — fl/privacy/dp.py injects config.dp_epsilon into
+  1. DP epsilon override — ppflx/privacy/dp.py injects config.dp_epsilon into
      the pkl-loaded DifferentialPrivacyParams when the sentinel (10.0) is not used.
   2. Dirichlet alpha flow — dirichlet_alpha reaches FLConfig and is passed
      through to dataset loaders when partitioning data.
@@ -31,7 +31,7 @@ if _ROOT not in sys.path:
 
 def _make_dp_params(epsilon=1.0, delta=1e-5, max_grad_norm=1.0, noise_multiplier=None):
     """Create a DifferentialPrivacyParams without requiring the full package."""
-    from fl.core.security import DifferentialPrivacyParams
+    from ppflx.core.security import DifferentialPrivacyParams
 
     return DifferentialPrivacyParams(
         epsilon=epsilon,
@@ -43,7 +43,7 @@ def _make_dp_params(epsilon=1.0, delta=1e-5, max_grad_norm=1.0, noise_multiplier
 
 def _make_config(**kwargs):
     """Return a minimal FLConfig with the given overrides."""
-    from fl import FLConfig
+    from ppflx import FLConfig
 
     defaults = dict(
         dataset="creditcard",
@@ -64,11 +64,11 @@ class TestEpsilonOverride(unittest.TestCase):
 
     def _run_setup_client(self, config, params_on_disk):
         """Call DifferentialPrivacyMode.setup_client_context with a mocked pkl."""
-        from fl.privacy.dp import DifferentialPrivacyMode
+        from ppflx.privacy.dp import DifferentialPrivacyMode
 
         mode = DifferentialPrivacyMode()
         with patch("os.path.exists", return_value=True), patch(
-            "fl.core.security.load_dp_params", return_value=params_on_disk
+            "ppflx.core.security.load_dp_params", return_value=params_on_disk
         ):
             return mode.setup_client_context(config)
 
@@ -146,7 +146,7 @@ class TestAlphaReachesLoader(unittest.TestCase):
         mock_loader_class = MagicMock(return_value=mock_loader_instance)
         mock_loader_class.get_spec.return_value = MagicMock(num_classes=2)
 
-        with patch("fl.datasets.get_dataset_loader", return_value=mock_loader_class):
+        with patch("ppflx_bench.datasets.get_dataset_loader", return_value=mock_loader_class):
             mock_loader_class.get_spec()
             mock_loader_instance.load(config)
 

@@ -2,7 +2,7 @@
 """Validate stored ZKP-family runs from their chain ledgers.
 
 Walks every ``ledgers/ledger_<mode>.json`` under the results root, validates
-ZKP-family modes with fl.compare.validation, and exits non-zero if any run
+ZKP-family modes with ppflx_bench.compare.validation, and exits non-zero if any run
 cannot be certified. See that module for what is and is not checked.
 """
 
@@ -15,14 +15,14 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from fl.compare.validation import (  # noqa: E402
+from ppflx_bench.compare.validation import (  # noqa: E402
     VERIFICATION_NOT_RECORDED,
     load_ledger_entries,
     sampled_coverage_warning,
     validate_zkp_ledger,
 )
 
-# Kept in sync with fl.compare.registry.MODES without importing its runtime
+# Kept in sync with ppflx_bench.compare.registry.MODES without importing its runtime
 # dependencies.
 ZKP_MODES = (
     "zkp",

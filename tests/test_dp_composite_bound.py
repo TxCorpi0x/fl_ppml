@@ -29,7 +29,7 @@ CONFIG = NS(zkp_backend="gnark", sim_mode=False, min_fit_clients=1, dataset="not
 
 @pytest.mark.parametrize("mode_name", ["he_tenseal_zkp_dp", "he_concrete_tfhe_zkp_dp"])
 def test_dp_composites_set_no_bound(monkeypatch, mode_name):
-    from fl.privacy import get_privacy_mode
+    from ppflx.privacy import get_privacy_mode
 
     monkeypatch.delenv("FL_ZKP_MAX_NORM", raising=False)
     zkp = get_privacy_mode(mode_name)._zkp_mode
@@ -41,7 +41,7 @@ def test_dp_composites_set_no_bound(monkeypatch, mode_name):
 
 
 def test_non_dp_composites_still_enforce_the_bound(monkeypatch):
-    from fl.privacy import get_privacy_mode
+    from ppflx.privacy import get_privacy_mode
 
     monkeypatch.delenv("FL_ZKP_MAX_NORM", raising=False)
     with pytest.raises(RuntimeError, match="no calibrated"):
@@ -50,7 +50,7 @@ def test_non_dp_composites_still_enforce_the_bound(monkeypatch):
 
 @requires_gnark
 def test_unbounded_zkp_proves_and_admits_a_large_update_unclipped(monkeypatch, gnark):
-    from fl.privacy.zkp import ZKPMode
+    from ppflx.privacy.zkp import ZKPMode
 
     use_gnark(monkeypatch, gnark)
     monkeypatch.delenv("FL_ZKP_MAX_NORM", raising=False)

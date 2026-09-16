@@ -22,7 +22,7 @@ REPO = Path(__file__).resolve().parents[1]
 
 
 def test_pyproject_run_config_covers_every_field_and_round_trips():
-    from fl.config import RUN_CONFIG_FIELDS, FLConfig
+    from ppflx.config import RUN_CONFIG_FIELDS, FLConfig
 
     defaults = tomllib.loads((REPO / "pyproject.toml").read_text())["tool"]["flwr"]["app"]["config"]
     assert set(defaults) == set(RUN_CONFIG_FIELDS)
@@ -37,7 +37,7 @@ def test_pyproject_run_config_covers_every_field_and_round_trips():
 
 
 def test_launcher_casts_overrides_to_the_declared_types(tmp_path):
-    from fl.launch import make_run_config, write_run_config
+    from ppflx_bench.launch import make_run_config, write_run_config
 
     run_config = make_run_config({"num-rounds": 2.0, "learning-rate": 1, "sim-mode": True, "mode": "dp"})
     assert run_config["num-rounds"] == 2 and type(run_config["num-rounds"]) is int
@@ -52,7 +52,7 @@ def test_launcher_casts_overrides_to_the_declared_types(tmp_path):
 
 def test_launched_processes_never_install_app_dependencies(tmp_path, monkeypatch):
     """The SuperLink defaults to `uv sync`-ing pyproject.toml from PyPI into a fresh env per run."""
-    import fl.launch as launch
+    import ppflx_bench.launch as launch
 
     monkeypatch.setenv("FLWR_DISABLE_RUNTIME_DEPENDENCY_INSTALLATION", "0")
     env = launch.flwr_env(tmp_path / ".flwr")
@@ -69,8 +69,8 @@ def test_launched_processes_never_install_app_dependencies(tmp_path, monkeypatch
 
 
 def test_harness_arguments_map_to_run_config_keys(tmp_path):
-    from fl.compare.experiment import run_config_for
-    from fl.launch import make_run_config
+    from ppflx_bench.compare.experiment import run_config_for
+    from ppflx_bench.launch import make_run_config
 
     base_args = {"dataset": "healthcare", "number_clients": 4, "rounds": 2, "max_epochs": 1, "dirichlet_alpha": None}
     run_config = make_run_config(run_config_for("zkp_sampled", base_args, str(tmp_path), simulation=False))
@@ -83,7 +83,7 @@ def test_harness_arguments_map_to_run_config_keys(tmp_path):
 
 def test_a_completed_run_with_crashed_clients_is_not_a_success():
     """A ClientApp crash leaves the SuperNode up; the run completes with no aggregate."""
-    from fl.compare.experiment import round_failures
+    from ppflx_bench.compare.experiment import round_failures
 
     clean = {"round_outcomes": [{"round": 1, "outcome": "committed", "flower_failures": 0}, {"round": 2, "outcome": "aggregated", "flower_failures": 0}]}
     assert round_failures(clean) == [] and round_failures(None) == []
@@ -100,8 +100,8 @@ def test_fab_carries_only_the_app_manifest_and_readme():
     from flwr.cli.build import build_fab_from_files
 
     files = {name: (REPO / name).read_bytes() for name in ("pyproject.toml", ".gitignore", "README.md")}
-    files["fl/server.py"] = (REPO / "fl" / "server.py").read_bytes()
-    files["results/healthcare/run/baseline/.flwr/apps/txcorpi0x.fl-ppml.1.0.0.x/README.md"] = b"installed copy"
+    files["ppflx/server.py"] = (REPO / "ppflx" / "server.py").read_bytes()
+    files["results/healthcare/run/baseline/.flwr/apps/txcorpi0x.ppflx-bench.1.0.0.x/README.md"] = b"installed copy"
     files["docs/README.md"] = b"nested readme"
 
     fab, _ = build_fab_from_files(files)
@@ -113,7 +113,7 @@ def test_fab_carries_only_the_app_manifest_and_readme():
 
 
 def test_records_take_numpy_scalars_and_reject_other_objects():
-    from fl.records import config_record, metric_record
+    from ppflx.records import config_record, metric_record
 
     assert dict(config_record({"a": np.int64(3), "b": np.float32(0.5), "c": "x", "d": None})) == {"a": 3, "b": 0.5, "c": "x"}
     with pytest.raises(TypeError):
@@ -122,8 +122,8 @@ def test_records_take_numpy_scalars_and_reject_other_objects():
 
 
 def test_client_state_round_trips_without_pickle():
-    from fl.core.elgamal_gnark import GlobalModel
-    from fl.records import pack_state, unpack_state
+    from ppflx.core.elgamal_gnark import GlobalModel
+    from ppflx.records import pack_state, unpack_state
 
     commitment = {
         "round": 3,
@@ -142,7 +142,7 @@ def test_client_state_round_trips_without_pickle():
 
 
 def test_client_state_only_rebuilds_allowlisted_types():
-    from fl.records import pack_state, unpack_state
+    from ppflx.records import pack_state, unpack_state
 
     @dataclasses.dataclass
     class GlobalModel:  # same name as the allowlisted class, different type
@@ -166,7 +166,7 @@ def _instruction(node, message_type=MessageType.TRAIN):
 
 
 def test_train_replies_become_results_and_failures():
-    from fl.server import FedPrivate
+    from ppflx.server import FedPrivate
 
     s = FedPrivate.__new__(FedPrivate)
     s._sampled = {("train", 1): [1, 2, 3, 4]}
@@ -197,7 +197,7 @@ def test_train_replies_become_results_and_failures():
 
 def _remembering_mode():
     """A plaintext mode that, like commit–challenge modes, needs its previous round's state."""
-    from fl.privacy import get_privacy_mode
+    from ppflx.privacy import get_privacy_mode
 
     class Remembering(type(get_privacy_mode("baseline"))):
         def setup_client_context(self, config):
@@ -219,10 +219,10 @@ def _remembering_mode():
 
 
 def test_client_app_carries_state_between_messages(tmp_path, monkeypatch):
-    import fl.app as app_module
-    import fl.privacy
-    from fl.launch import make_run_config
-    from fl.models import get_model_for_batch
+    import ppflx_bench.app as app_module
+    import ppflx.privacy
+    from ppflx_bench.launch import make_run_config
+    from ppflx.models import get_model_for_batch
 
     data = TensorDataset(torch.randn(24, 13), torch.randint(0, 2, (24,)))
     loaders = [DataLoader(data, batch_size=8) for _ in range(2)]
@@ -233,7 +233,7 @@ def test_client_app_carries_state_between_messages(tmp_path, monkeypatch):
 
     mode = _remembering_mode()
     monkeypatch.setattr(app_module, "_load_data", load)
-    monkeypatch.setattr(fl.privacy, "get_privacy_mode", lambda name: mode)
+    monkeypatch.setattr(ppflx.privacy, "get_privacy_mode", lambda name: mode)
 
     run_config = make_run_config({"results-dir": str(tmp_path), "num-clients": 2})
     context = Context(run_id=1, node_id=11, node_config={"partition-id": 1, "num-partitions": 2}, state=RecordDict(), run_config=run_config)
@@ -253,14 +253,14 @@ def test_client_app_carries_state_between_messages(tmp_path, monkeypatch):
     )
     assert {"loss", "num-examples", "accuracy"} <= set(evaluation.content["metrics"])
 
-    raw = json.loads(context.state["fl.client.benchmark"]["raw"])
+    raw = json.loads(context.state["ppflx.client.benchmark"]["raw"])
     assert len(raw["client_fit_time"]) == 2 and len(raw["test_accuracy"]) == 1
     assert json.loads((tmp_path / "client_1_benchmark.json").read_text())["mode"] == "baseline"
 
 
 def test_client_app_rejects_a_node_config_that_does_not_match_the_run(tmp_path):
-    import fl.app as app_module
-    from fl.launch import make_run_config
+    import ppflx_bench.app as app_module
+    from ppflx_bench.launch import make_run_config
 
     context = Context(
         run_id=1, node_id=11, node_config={"partition-id": 0, "num-partitions": 5}, state=RecordDict(),

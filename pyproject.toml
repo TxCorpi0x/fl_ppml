@@ -1,22 +1,22 @@
 [project]
-name = "fl-ppml"
+name = "ppflx-bench"
 version = "1.0.0"
-description = "Privacy-preserving federated learning with HE, ZKP and DP on Flower"
+description = "Benchmark harness for ppflx: privacy-preserving federated learning with HE, ZKP and DP on Flower"
 requires-python = ">=3.12,<3.13"
 dependencies = ["flwr[simulation]==1.36.0"]
 
 [tool.flwr.app]
 publisher = "txcorpi0x"
-# The ServerApp and ClientApp are imported from the `fl` package on
-# PYTHONPATH (fl.launch puts this checkout there), not from a copy inside the
-# FAB: `fl` finds its keys and dataset helpers relative to its own location.
+# The ServerApp and ClientApp are imported from the `ppflx_bench` package on
+# PYTHONPATH (ppflx_bench.launch puts this checkout there), not from a copy inside the
+# FAB: the packages find their keys and datasets relative to their own location.
 fab-include = ["/README.md"]
 
 [tool.flwr.app.components]
-serverapp = "fl.app:server_app"
-clientapp = "fl.app:client_app"
+serverapp = "ppflx_bench.app:server_app"
+clientapp = "ppflx_bench.app:client_app"
 
-# Run config read by fl.config.FLConfig.from_run_config. Numeric 0 means
+# Run config read by ppflx.config.FLConfig.from_run_config. Numeric 0 means
 # "unset" for min-eval-clients (num-clients // 2), dirichlet-alpha (IID),
 # dp-epsilon (use the DP parameter file) and round-timeout (no limit).
 [tool.flwr.app.config]

@@ -16,8 +16,8 @@ import pytest
 import torch
 from flwr.common import Code, FitRes, Status, ndarrays_to_parameters, parameters_to_ndarrays
 
-from fl.core import zkp_gnark
-from fl.core.zkp_gnark import generate_gnark_proofs
+from ppflx.core import zkp_gnark
+from ppflx.core.zkp_gnark import generate_gnark_proofs
 from tests.conftest import requires_gnark, use_gnark
 
 pytestmark = requires_gnark
@@ -77,7 +77,7 @@ def config():
 
 
 def _plaintext_server(config):
-    from fl.privacy.zkp import ZKPMode
+    from ppflx.privacy.zkp import ZKPMode
 
     mode = ZKPMode()
     mode.setup_server_context(config)
@@ -87,7 +87,7 @@ def _plaintext_server(config):
 
 def _upload(server, weights):
     """An honest client: download the server's global model, then clip, prove and upload `weights`."""
-    from fl.privacy.zkp import ZKPMode
+    from ppflx.privacy.zkp import ZKPMode
 
     client, ctx = ZKPMode(), {"backend": "gnark"}
     client.on_fit_config(ctx, {"server_round": 1, **server.fit_config(1)})
@@ -98,7 +98,7 @@ def _upload(server, weights):
 
 def _raw_update_proofs(server, weights):
     """A client that skips clipping: proves its raw update with true per-proof bounds."""
-    from fl.privacy.zkp import quantized_update
+    from ppflx.privacy.zkp import quantized_update
 
     delta = quantized_update(list(weights.values()), server._global)
     proofs, _ = generate_gnark_proofs(OrderedDict(zip(LAYERS, delta)))
@@ -112,7 +112,7 @@ def test_control_client_library_refuses_to_declare_an_over_bound_update(config):
     server = _plaintext_server(config)
     params, metrics = _raw_update_proofs(server, _honest_weights())
     assert metrics  # a small update proves fine
-    from fl.privacy.zkp import quantized_update
+    from ppflx.privacy.zkp import quantized_update
 
     delta = quantized_update(list(_poisoned_weights().values()), server._global)
     with pytest.raises(RuntimeError, match="exceeds the server's bound"):
@@ -196,8 +196,8 @@ def test_update_measured_against_the_wrong_global_model_is_rejected(config):
 
 def _decrypt_aggregate(parameters, secret_ctx):
     import tenseal as ts
-    from fl.core.security import _parse_cvec
-    from fl.privacy.he_tenseal import _unpack_arrays
+    from ppflx.core.security import _parse_cvec
+    from ppflx.privacy.he_tenseal import _unpack_arrays
 
     layers = []
     for arr in _unpack_arrays(parameters_to_ndarrays(parameters)):
@@ -220,8 +220,8 @@ def _decrypt_aggregate(parameters, secret_ctx):
 )
 def test_he_tenseal_zkp_rejects_ciphertext_that_does_not_match_proof(config):
     import tenseal as ts
-    from fl.core.security import make_tenseal_context
-    from fl.privacy.he_zkp import HeTensealZKPMode
+    from ppflx.core.security import make_tenseal_context
+    from ppflx.privacy.he_zkp import HeTensealZKPMode
 
     secret_ctx = make_tenseal_context()
     server_ctx = ts.context_from(secret_ctx.serialize(save_secret_key=False))

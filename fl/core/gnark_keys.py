@@ -8,7 +8,8 @@ verifying key each proof must be checked under, and so both sides agree on
 each circuit's fixed size.
 
 Environment:
-    FL_ZKP_KEYS_DIR  manifest and verifying keys (default: zkp_gnark_service/keys)
+    FL_ZKP_KEYS_DIR  manifest and verifying keys (default: keys packaged with
+                     this library, else zkp_gnark_service/keys beside it)
     FL_ZKP_PK_DIR    proving-key cache for the prover role
                      (default: ~/.cache/fl_ppml/gnark_pk)
 """
@@ -27,14 +28,26 @@ ELGAMAL_CIRCUIT = "elgamal"
 KEYS_DIR_ENV = "FL_ZKP_KEYS_DIR"
 PK_DIR_ENV = "FL_ZKP_PK_DIR"
 _REPO = Path(__file__).resolve().parents[2]
-DEFAULT_KEYS_DIR = _REPO / "zkp_gnark_service" / "keys"
+# Where the pinned manifest and verifying keys are looked up, in order: the
+# environment, keys shipped with this package, then the proof service checked
+# out beside it. Packaged keys are the trust anchor once the service lives in
+# its own repository; the service itself is pointed at its keys with --keys-dir.
+PACKAGED_KEYS_DIR = Path(__file__).resolve().parent / "gnark_keys_data"
+SERVICE_KEYS_DIR = _REPO / "zkp_gnark_service" / "keys"
 DEFAULT_PK_DIR = Path.home() / ".cache" / "fl_ppml" / "gnark_pk"
 
 _cache: Dict[tuple, dict] = {}
 
 
 def keys_dir() -> Path:
-    return Path(os.environ.get(KEYS_DIR_ENV, str(DEFAULT_KEYS_DIR)))
+    """The pinned keys directory: the environment, else packaged keys, else the service's."""
+    from_env = os.environ.get(KEYS_DIR_ENV)
+    if from_env:
+        return Path(from_env)
+    for candidate in (PACKAGED_KEYS_DIR, SERVICE_KEYS_DIR):
+        if (candidate / "manifest.json").exists():
+            return candidate
+    return SERVICE_KEYS_DIR
 
 
 def pk_dir() -> Path:
@@ -48,8 +61,8 @@ def load_manifest() -> dict:
         stat = path.stat()
     except FileNotFoundError as exc:
         raise FileNotFoundError(
-            f"No pinned ZKP key manifest at {path}. Run: zkp_gnark_service/gnark_service setup "
-            f"--keys-dir {keys_dir()} --pk-dir {pk_dir()}"
+            f"No pinned ZKP key manifest at {path}. Point {KEYS_DIR_ENV} at the keys of the "
+            f"proof service, or run: gnark_service setup --keys-dir {keys_dir()} --pk-dir {pk_dir()}"
         ) from exc
     key = (str(path), stat.st_mtime_ns, stat.st_size)
     if key not in _cache:

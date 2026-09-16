@@ -21,7 +21,14 @@ import re
 import subprocess
 from pathlib import Path
 
-GNARK_BINARY = Path(__file__).resolve().parents[2] / "zkp_gnark_service" / "gnark_service"
+# The proof service binary, which also generates ElGamal key pairs. Set
+# FL_GNARK_BINARY when the service is not checked out beside this package.
+BINARY_ENV = "FL_GNARK_BINARY"
+_DEFAULT_BINARY = Path(__file__).resolve().parents[2] / "zkp_gnark_service" / "gnark_service"
+
+
+def gnark_binary() -> Path:
+    return Path(os.environ.get(BINARY_ENV, str(_DEFAULT_BINARY)))
 
 _HEX_POINT = re.compile(r"^[0-9a-f]{64}$")
 
@@ -36,15 +43,17 @@ def generate(
             if not overwrite:
                 raise FileExistsError(f"{path} already exists. Pass overwrite=True to regenerate.")
             os.remove(path)
-    if not GNARK_BINARY.exists():
+    binary = gnark_binary()
+    if not binary.exists():
         raise FileNotFoundError(
-            f"{GNARK_BINARY} not built. Run: cd zkp_gnark_service && go build -o gnark_service ."
+            f"{binary} not built. Build the proof service (go build -o gnark_service .) "
+            f"or point {BINARY_ENV} at it."
         )
     for path in (secret_path, public_path):
         os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
 
     result = subprocess.run(
-        [str(GNARK_BINARY), "elgamal-keygen", secret_path, public_path],
+        [str(binary), "elgamal-keygen", secret_path, public_path],
         capture_output=True,
         text=True,
     )

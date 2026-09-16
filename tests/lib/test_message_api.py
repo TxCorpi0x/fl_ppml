@@ -15,7 +15,15 @@ from flwr.app import ArrayRecord, ConfigRecord, Context, Error, Message, Message
 from flwr.common import parameters_to_ndarrays
 from torch.utils.data import DataLoader, TensorDataset
 
-REPO = Path(__file__).resolve().parents[2]
+def _repo_root() -> Path:
+    """The checkout root, found by marker so the tests work at any depth."""
+    for parent in Path(__file__).resolve().parents:
+        if (parent / "pyproject.toml").exists() or (parent / "ppflx").is_dir():
+            return parent
+    raise RuntimeError("could not locate the repository root")
+
+
+REPO = _repo_root()
 
 
 # ─── Run config ──────────────────────────────────────────────────────────────

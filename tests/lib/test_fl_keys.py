@@ -5,7 +5,15 @@ from contextlib import redirect_stdout
 from pathlib import Path
 
 # Always run relative to the fl_ppml project root
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
+def _repo_root() -> Path:
+    """The checkout root, found by marker so the tests work at any depth."""
+    for parent in Path(__file__).resolve().parents:
+        if (parent / "pyproject.toml").exists() or (parent / "ppflx").is_dir():
+            return parent
+    raise RuntimeError("could not locate the repository root")
+
+
+PROJECT_ROOT = _repo_root()
 os.chdir(PROJECT_ROOT)
 sys.path.insert(0, str(PROJECT_ROOT))
 

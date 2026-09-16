@@ -5,7 +5,15 @@ from pathlib import Path
 
 import pytest
 
-REPO = Path(__file__).resolve().parents[2]
+def _repo_root() -> Path:
+    """The checkout root, found by marker so the tests work at any depth."""
+    for parent in Path(__file__).resolve().parents:
+        if (parent / "pyproject.toml").exists() or (parent / "ppflx").is_dir():
+            return parent
+    raise RuntimeError("could not locate the repository root")
+
+
+REPO = _repo_root()
 
 
 def test_pyproject_run_config_covers_every_field_and_round_trips():

@@ -10,7 +10,15 @@ from types import SimpleNamespace
 import pytest
 import requests
 
-GNARK_BINARY = Path(os.environ.get("FL_GNARK_BINARY", Path(__file__).resolve().parents[2] / "zkp_gnark_service" / "gnark_service"))
+def _repo_root() -> Path:
+    """The checkout root, found by marker so the tests work at any depth."""
+    for parent in Path(__file__).resolve().parents:
+        if (parent / "pyproject.toml").exists() or (parent / "ppflx").is_dir():
+            return parent
+    raise RuntimeError("could not locate the repository root")
+
+
+GNARK_BINARY = Path(os.environ.get("FL_GNARK_BINARY", _repo_root() / "zkp_gnark_service" / "gnark_service"))
 TEST_NORM_N, TEST_ELGAMAL_N = 8, 4
 
 requires_gnark = pytest.mark.skipif(

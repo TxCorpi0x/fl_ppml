@@ -219,7 +219,7 @@ def _remembering_mode():
 
 
 def test_client_app_carries_state_between_messages(tmp_path, monkeypatch):
-    import fl.client as client_module
+    import fl.app as app_module
     import fl.privacy
     from fl.launch import make_run_config
     from fl.models import get_model_for_batch
@@ -232,7 +232,7 @@ def test_client_app_carries_state_between_messages(tmp_path, monkeypatch):
         return loaders, loaders
 
     mode = _remembering_mode()
-    monkeypatch.setattr(client_module, "_load_data", load)
+    monkeypatch.setattr(app_module, "_load_data", load)
     monkeypatch.setattr(fl.privacy, "get_privacy_mode", lambda name: mode)
 
     run_config = make_run_config({"results-dir": str(tmp_path), "num-clients": 2})
@@ -242,12 +242,12 @@ def test_client_app_carries_state_between_messages(tmp_path, monkeypatch):
     for server_round in (1, 2):
         config = ConfigRecord({"server_round": server_round, "local_epochs": 1, "learning_rate": 0.01, "batch_size": 8})
         request = Message(RecordDict({"arrays": arrays, "config": config}), dst_node_id=11, message_type=MessageType.TRAIN, group_id=str(server_round))
-        reply = client_module.client_app(request, context)
+        reply = app_module.client_app(request, context)
         assert not reply.has_error()
         assert reply.content["fit_metrics"]["previous_round"] == server_round - 1
         assert reply.content["metrics"]["num-examples"] == len(loaders[1])
 
-    evaluation = client_module.client_app(
+    evaluation = app_module.client_app(
         Message(RecordDict({"arrays": arrays, "config": ConfigRecord({"server_round": 2})}), dst_node_id=11, message_type=MessageType.EVALUATE, group_id="2"),
         context,
     )
@@ -259,7 +259,7 @@ def test_client_app_carries_state_between_messages(tmp_path, monkeypatch):
 
 
 def test_client_app_rejects_a_node_config_that_does_not_match_the_run(tmp_path):
-    import fl.client as client_module
+    import fl.app as app_module
     from fl.launch import make_run_config
 
     context = Context(
@@ -267,4 +267,4 @@ def test_client_app_rejects_a_node_config_that_does_not_match_the_run(tmp_path):
         run_config=make_run_config({"results-dir": str(tmp_path), "num-clients": 2}),
     )
     with pytest.raises(ValueError, match="does not match num-clients=2"):
-        client_module._client_for(context)
+        app_module._client_for(context)

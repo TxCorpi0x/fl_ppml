@@ -2,8 +2,8 @@
 Run one experiment on Flower: a SuperLink, one SuperNode per client, and the
 Flower App declared in pyproject.toml.
 
-The SuperLink starts the ServerApp (``fl.server:server_app``); each SuperNode
-starts a ClientApp process (``fl.client:client_app``) for every message. All of
+The SuperLink starts the ServerApp (``fl.app:server_app``); each SuperNode
+starts a ClientApp process (``fl.app:client_app``) for every message. All of
 them run from the repository root with this checkout on PYTHONPATH, so relative
 key and dataset paths resolve as they do for compare.py. ``flwr run`` submits
 the run; its FAB carries only pyproject.toml and the README.

@@ -13,8 +13,8 @@ publisher = "txcorpi0x"
 fab-include = ["/README.md"]
 
 [tool.flwr.app.components]
-serverapp = "fl.server:server_app"
-clientapp = "fl.client:client_app"
+serverapp = "fl.app:server_app"
+clientapp = "fl.app:client_app"
 
 # Run config read by fl.config.FLConfig.from_run_config. Numeric 0 means
 # "unset" for min-eval-clients (num-clients // 2), dirichlet-alpha (IID),

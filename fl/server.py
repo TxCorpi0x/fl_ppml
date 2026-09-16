@@ -1,8 +1,7 @@
 """
-Flower ServerApp and the FedPrivate strategy (Flower Message API).
+The FedPrivate strategy (Flower Message API).
 
-The ServerApp builds an FLConfig from the run config, loads the server's test
-data and runs FedPrivate. FedPrivate samples SuperNodes, sends train and
+FedPrivate samples SuperNodes, sends train and
 evaluate messages, and hands the replies to the PrivacyMode plugin, which owns
 every mode-specific decision (HE aggregation, proof verification, admission).
 Plugins see replies as ``(node, FitRes)`` pairs whose ``node.cid`` is the
@@ -25,7 +24,7 @@ from dataclasses import dataclass
 from typing import Dict, Iterable, List, Optional, Tuple
 
 import torch
-from flwr.app import ArrayRecord, ConfigRecord, Context, Message, MessageType, MetricRecord, RecordDict
+from flwr.app import ArrayRecord, ConfigRecord, Message, MessageType, MetricRecord, RecordDict
 from flwr.common import (
     Code,
     EvaluateRes,
@@ -36,11 +35,11 @@ from flwr.common import (
     ndarrays_to_parameters,
     parameters_to_ndarrays,
 )
-from flwr.serverapp import Grid, ServerApp
+from flwr.serverapp import Grid
 from flwr.serverapp.strategy import Strategy
 
 from fl.chain import get_chain
-from fl.config import FLConfig, apply_process_env
+from fl.config import FLConfig
 from fl.core.engine import test
 from fl.core.security import aggregate_custom
 from fl.core.benchmark import BenchmarkTimer, get_memory_usage_mb, get_benchmark
@@ -608,52 +607,3 @@ def make_strategy(
         min_evaluate_clients=config.effective_min_eval_clients,
         min_available_clients=config.min_avail_clients,
     )
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# ServerApp
-# ─────────────────────────────────────────────────────────────────────────────
-
-server_app = ServerApp()
-
-
-@server_app.main()
-def main(grid: Grid, context: Context) -> None:
-    """Run one experiment from the run config; write benchmark.json to its results-dir."""
-    from fl.core.benchmark import init_benchmark
-    from fl.datasets import get_dataset_loader
-    from fl.privacy import get_privacy_mode
-
-    config = FLConfig.from_run_config(context.run_config)
-    apply_process_env(config)
-
-    Loader = get_dataset_loader(config.dataset)
-    config.num_classes = Loader.get_spec().num_classes
-    # Clients partition the same data with the same seed; the largest shard's
-    # batch count sizes the ZKP update-norm bound (fl/core/update_bound.py).
-    trainloaders, _, testloader = Loader().load(config)
-
-    mode = get_privacy_mode(config.privacy_mode)
-    benchmark = (
-        init_benchmark(
-            config.privacy_mode,
-            config.num_clients,
-            config.num_rounds,
-            transport="simulated" if config.sim_mode else "network",
-            zkp_backend=config.zkp_backend if "zkp" in config.privacy_mode else None,
-        )
-        if config.benchmark
-        else None
-    )
-    strategy = make_strategy(
-        config, mode, testloader, benchmark=benchmark, client_batches=max(len(t) for t in trainloaders)
-    )
-
-    print(f"Starting ServerApp [{config.privacy_mode}]")
-    strategy.run(grid)
-
-    if benchmark:
-        os.makedirs(config.results_dir, exist_ok=True)
-        bench_path = os.path.join(config.results_dir, "benchmark.json")
-        benchmark.save(bench_path)
-        benchmark.print_summary()

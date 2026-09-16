@@ -3,11 +3,7 @@ import os
 import random
 import torch
 import shutil
-import yaml
-import matplotlib.pyplot as plt
 from sklearn.metrics import roc_curve, auc, confusion_matrix
-import seaborn as sn
-import pandas as pd
 import torch.nn.functional
 from collections import OrderedDict
 from .security import *
@@ -80,6 +76,7 @@ def write_yaml(data, file_write="toyaml.yml", data1=None):
     :param data1: data to add in the YAML file (if we want to add data in the YAML file without overwriting it)
     :return: data (the data to write in the YAML file)
     """
+    import yaml
 
     def accumul_time(time_key, data, data1):
         if time_key in data1 and time_key in data:
@@ -108,6 +105,7 @@ def read_yaml(yaml_file="config.yml"):
     :param yaml_file: path to the YAML file
     :return: config (the data in the YAML file)
     """
+    import yaml
 
     with open(yaml_file) as f:
         config = yaml.safe_load(f)
@@ -434,6 +432,9 @@ def save_matrix(y_true, y_pred, path, classes):
     :param path: path to save the confusion matrix
     :param classes: list of the classes
     """
+    import matplotlib.pyplot as plt
+    import pandas as pd
+    import seaborn as sn
     # To get the confusion matrix
     cf_matrix = confusion_matrix(y_true, y_pred)
 
@@ -466,6 +467,7 @@ def save_roc(targets, y_proba, path, nbr_classes):
     :param path: path to save the roc curve
     :param nbr_classes: number of classes
     """
+    import matplotlib.pyplot as plt
     y_true = np.zeros(
         shape=(len(targets), nbr_classes)
     )  # array-like of shape (n_samples, n_classes)
@@ -585,6 +587,7 @@ def plot_graph(
     :param title: title of the graph
     :param path: path to save the graph
     """
+    import matplotlib.pyplot as plt
     lw = 2
 
     plt.figure()

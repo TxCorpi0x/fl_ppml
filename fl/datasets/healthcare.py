@@ -27,12 +27,7 @@ class HealthcareLoader(DatasetLoader):
     )
 
     def load(self, config) -> Tuple[List[DataLoader], List[DataLoader], DataLoader]:
-        try:
-            from datasets import load_heart_disease_data, HealthcareDataset
-        except ImportError as exc:
-            raise ImportError(
-                "Could not import datasets.py from the fl_ppml/ directory."
-            ) from exc
+        from fl.datasets.sources import load_heart_disease_data, HealthcareDataset
 
         print("Loading Healthcare (Heart Disease) dataset…")
         X_train, X_test, y_train, y_test = load_heart_disease_data()

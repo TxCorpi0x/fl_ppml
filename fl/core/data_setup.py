@@ -10,15 +10,9 @@ from .common import *
 
 NUM_WORKERS = os.cpu_count()
 
-# Try to import custom dataset loaders
+# Tabular dataset loaders (fl/datasets/sources.py)
 try:
-    import sys
-
-    # __file__ is fl/core/data_setup.py → go up 3 levels to reach fl_ppml/
-    sys.path.insert(
-        0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-    )
-    from datasets import (
+    from fl.datasets.sources import (
         load_heart_disease_data,
         load_stock_market_data,
         load_creditcard_data,
@@ -90,7 +84,7 @@ def load_datasets(
         # Use healthcare dataset
         if not CUSTOM_DATASETS_AVAILABLE:
             raise RuntimeError(
-                "Healthcare dataset loader not available. Please ensure datasets.py is properly set up."
+                "Healthcare dataset loader not available. Please ensure fl/datasets/sources.py is importable."
             )
 
         print("Loading Healthcare (Heart Disease) dataset for tabular data...")
@@ -102,7 +96,7 @@ def load_datasets(
         # Use credit card fraud detection dataset
         if not CUSTOM_DATASETS_AVAILABLE:
             raise RuntimeError(
-                "Credit card dataset loader not available. Please ensure datasets.py is properly set up."
+                "Credit card dataset loader not available. Please ensure fl/datasets/sources.py is importable."
             )
 
         print("Loading Credit Card Fraud Detection dataset for tabular data...")
@@ -115,7 +109,7 @@ def load_datasets(
         # Use stock market dataset
         if not CUSTOM_DATASETS_AVAILABLE:
             raise RuntimeError(
-                "Stock market dataset loader not available. Please ensure datasets.py is properly set up."
+                "Stock market dataset loader not available. Please ensure fl/datasets/sources.py is importable."
             )
 
         print("Loading Stock Market dataset for tabular data...")

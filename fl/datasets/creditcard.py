@@ -43,13 +43,7 @@ class CreditCardLoader(DatasetLoader):
         Returns:
             (trainloaders, valloaders, testloader)
         """
-        try:
-            from datasets import load_creditcard_data, CreditCardDataset
-        except ImportError as exc:
-            raise ImportError(
-                "Could not import datasets.py from the fl_ppml/ directory. "
-                "Ensure you ran `pip install -e .` from that directory."
-            ) from exc
+        from fl.datasets.sources import load_creditcard_data, CreditCardDataset
 
         print("Loading Credit Card Fraud Detection dataset…")
         X_train, X_test, y_train, y_test = load_creditcard_data(subsample=None)

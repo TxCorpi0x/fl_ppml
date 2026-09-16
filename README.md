@@ -401,7 +401,7 @@ fl_ppml/
 │   ├── chain.py                ← blockchain audit (mock / web3)
 │   ├── config.py               ← global configuration
 │   ├── experiment.py           ← per-mode experiment driver
-│   ├── datasets.py             ← dataset registry + Dirichlet partitioning
+│   ├── datasets/               ← dataset registry, loaders and Dirichlet partitioning
 │   ├── privacy/
 │   │   ├── he_tenseal.py       ← CKKS encryption via TenSEAL
 │   │   ├── he_concrete.py      ← TFHE via Concrete ML

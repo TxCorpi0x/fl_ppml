@@ -4,6 +4,27 @@
 [![Flower 1.36.0](https://img.shields.io/badge/flower-1.36.0-green.svg)](https://flower.ai)
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 
+> ## Archived — development moved on 2026-09-16
+>
+> This repository was the monorepo for this work, from the first prototype
+> through the hardening of the HE, ZKP and DP modes and the migration to
+> Flower 1.36. It is read-only. Work continues in three repositories, each
+> carrying the full history of the files it contains:
+>
+> | Repository | What it holds |
+> |---|---|
+> | [CorpiXo/ppflx](https://github.com/CorpiXo/ppflx) | The library: privacy modes, key management, the `FedPrivate` strategy and Flower client, the crypto core, the audit ledger, and `docs/ZKP.md` |
+> | [CorpiXo/gnark-gradient-prover](https://github.com/CorpiXo/gnark-gradient-prover) | The Go Groth16 proof service: circuits, pinned keys and the service itself |
+> | [CorpiXo/ppflx-bench](https://github.com/CorpiXo/ppflx-bench) | The benchmark harness: the Flower App, launcher, comparison runner, datasets, scripts and guides |
+>
+> Only this repository keeps the interleaved history of all three and the
+> `results/` from earlier runs. Those results predate the current protocols and
+> key handling, so they were deliberately not carried over; `ppflx-bench` will
+> publish new ones after the next full benchmark run.
+>
+> The three repositories were created by splitting this history with
+> `git filter-repo`, so commits, authorship and dates are unchanged.
+
 A benchmarking framework comparing **ten** privacy-preserving federated learning configurations across Homomorphic Encryption (HE), Zero-Knowledge Proofs (ZKP), Differential Privacy (DP), and their combinations — with blockchain audit ledger support, sweep experiments, and non-IID dataset partitioning.
 
 ---
